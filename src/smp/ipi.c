@@ -57,6 +57,12 @@ void ipiStallCoreCallback(bool_t irqPath)
             }
             arch_pause();
         }
+        big_kernel_lock.current_writer_turn.turn = !big_kernel_lock.current_writer_turn.turn;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            arch_pause();
+        }
 
         /* make sure no resource access passes from this point */
         asm volatile("" ::: "memory");

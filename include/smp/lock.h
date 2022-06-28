@@ -47,6 +47,23 @@ typedef struct clh_lock {
 
     clh_qnode_t *head;
     PAD_TO_NEXT_CACHE_LN(sizeof(clh_qnode_t *));
+
+    struct {
+        word_t turn;
+        PAD_TO_NEXT_CACHE_LN(sizeof(word_t));
+    } current_writer_turn, completed_writer_turn;
+
+    struct {
+        word_t count;
+        PAD_TO_NEXT_CACHE_LN(sizeof(word_t));
+    } reader_cohorts[2];
+
+    struct {
+        word_t observed_writer_turn;
+        word_t own_read_lock;
+        PAD_TO_NEXT_CACHE_LN(sizeof(word_t) +
+                             sizeof(word_t));
+    } node_read_state[CONFIG_MAX_NUM_NODES];
 } clh_lock_t;
 
 extern clh_lock_t big_kernel_lock;
@@ -116,6 +133,13 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
         arch_pause();
     }
 
+    big_kernel_lock.current_writer_turn.turn = !big_kernel_lock.current_writer_turn.turn;
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        arch_pause();
+    }
+
     /* make sure no resource access passes from this point */
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
@@ -125,9 +149,35 @@ static inline void FORCE_INLINE clh_lock_release(word_t cpu)
     /* make sure no resource access passes from this point */
     __atomic_thread_fence(__ATOMIC_RELEASE);
 
+    big_kernel_lock.completed_writer_turn.turn = !big_kernel_lock.completed_writer_turn.turn;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+
     big_kernel_lock.node_owners[cpu].node->value = CLHState_Granted;
     big_kernel_lock.node_owners[cpu].node =
         big_kernel_lock.node_owners[cpu].next;
+}
+
+static inline void FORCE_INLINE clh_lock_read_acquire(word_t cpu)
+{
+    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[0].count, 1, __ATOMIC_ACQUIRE);
+    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[1].count, 1, __ATOMIC_ACQUIRE);
+    word_t observed_writer_turn = big_kernel_lock.current_writer_turn.turn;
+    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[!observed_writer_turn].count, 1, __ATOMIC_ACQUIRE);
+
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    while (big_kernel_lock.completed_writer_turn.turn != observed_writer_turn) {
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        arch_pause();
+    }
+
+    big_kernel_lock.node_read_state[cpu].observed_writer_turn = observed_writer_turn;
+    big_kernel_lock.node_read_state[cpu].own_read_lock = true;
+}
+
+static inline void FORCE_INLINE clh_lock_read_release(word_t cpu)
+{
+    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_RELEASE);
+    big_kernel_lock.node_read_state[cpu].own_read_lock = false;
 }
 
 static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
@@ -143,6 +193,14 @@ static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
     clh_lock_release(getCurrentCPUIndex());              \
 } while(0)
 
+#define NODE_READ_LOCK_ do {                             \
+    clh_lock_read_acquire(getCurrentCPUIndex());         \
+} while (0)
+
+#define NODE_READ_UNLOCK_ do {                           \
+    clh_lock_read_release(getCurrentCPUIndex());         \
+} while (0)
+
 #define NODE_LOCK_IF(_cond, _irqPath) do {               \
     if((_cond)) {                                        \
         NODE_LOCK(_irqPath);                             \
@@ -153,6 +211,16 @@ static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
     if(clh_is_self_in_queue()) {                         \
         NODE_UNLOCK;                                     \
     }                                                    \
+    else if (big_kernel_lock.node_read_state[getCurrentCPUIndex()].own_read_lock) { \
+        NODE_READ_UNLOCK_;                               \
+    }                                                    \
+} while(0)
+
+#define NODE_TAKE_WRITE_IF_READ_HELD_ do {               \
+    if (big_kernel_lock.node_read_state[getCurrentCPUIndex()].own_read_lock) { \
+        NODE_READ_UNLOCK_;                               \
+        NODE_LOCK_SYS;                                   \
+    }                                                    \
 } while(0)
 
 #else
@@ -160,10 +228,15 @@ static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
 #define NODE_UNLOCK do {} while (0)
 #define NODE_LOCK_IF(_cond, _irq) do {} while (0)
 #define NODE_UNLOCK_IF_HELD do {} while (0)
+#define NODE_READ_LOCK_ do {} while (0)
+#define NODE_READ_UNLOCK_ do {} while (0)
+#define NODE_TAKE_WRITE_IF_READ_HELD_ do {} while (0)
 #endif /* ENABLE_SMP_SUPPORT */
 
 #define NODE_LOCK_SYS NODE_LOCK(false)
 #define NODE_LOCK_IRQ NODE_LOCK(true)
 #define NODE_LOCK_SYS_IF(_cond) NODE_LOCK_IF(_cond, false)
 #define NODE_LOCK_IRQ_IF(_cond) NODE_LOCK_IF(_cond, true)
-
+#define NODE_READ_LOCK NODE_READ_LOCK_
+#define NODE_READ_UNLOCK NODE_READ_UNLOCK_
+#define NODE_TAKE_WRITE_IF_READ_HELD NODE_TAKE_WRITE_IF_READ_HELD_

@@ -104,6 +104,8 @@ void VISIBLE NORETURN c_handle_interrupt(void)
 
 void NORETURN slowpath(syscall_t syscall)
 {
+    NODE_TAKE_WRITE_IF_READ_HELD;
+
     if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
 #ifdef TRACK_KERNEL_ENTRIES
         ksKernelEntry.path = Entry_UnknownSyscall;
@@ -142,7 +144,7 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 ALIGN(L1_CACHE_LINE_SIZE)
 void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 {
-    NODE_LOCK_SYS;
+    NODE_READ_LOCK;
 
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
@@ -179,7 +181,7 @@ void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo, word_t re
 void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 {
-    NODE_LOCK_SYS;
+    NODE_READ_LOCK;
 
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
