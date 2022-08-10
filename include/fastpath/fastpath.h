@@ -87,7 +87,13 @@ static inline void cap_reply_cap_ptr_new_np(cap_t *cap_ptr, word_t capReplyCanGr
 static inline void endpoint_ptr_mset_epQueue_tail_state(endpoint_t *ep_ptr, word_t epQueue_tail,
                                                         word_t state)
 {
-    ep_ptr->words[0] = epQueue_tail | state;
+    // ep_ptr->words[0] = epQueue_tail | state;
+    endpoint_ptr_set_epQueue_tail(ep_ptr, epQueue_tail);
+    // ep_ptr->words[0] &= ~0x3fffffffffff0000ull;
+    // ep_ptr->words[0] |= (epQueue_tail << 14) & 0x3fffffffffff0000;
+    endpoint_ptr_set_state(ep_ptr, state);
+    // ep_ptr->words[0] &= ~0xc000000000000000ull;
+    // ep_ptr->words[0] |= (state << 62) & 0xc000000000000000;
 }
 
 static inline void endpoint_ptr_set_epQueue_head_np(endpoint_t *ep_ptr, word_t epQueue_head)

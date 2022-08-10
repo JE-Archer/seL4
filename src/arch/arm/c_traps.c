@@ -182,6 +182,7 @@ void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 {
     NODE_READ_LOCK;
+    // NODE_LOCK_SYS;
 
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES

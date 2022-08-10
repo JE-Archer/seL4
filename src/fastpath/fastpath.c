@@ -12,6 +12,36 @@
 #endif
 #include <benchmark/benchmark_utilisation.h>
 
+static inline
+FORCE_INLINE
+void print_ep(endpoint_t *ep_ptr)
+{
+    uint8_t *data = ep_ptr;
+    printf("%p: ", ep_ptr);
+    for (int i = 0; i < 16; i++) {
+        printf("%02x ", data[i]);
+    }
+    printf("\n");
+}
+
+static inline
+FORCE_INLINE
+void ep_lock(endpoint_t *ep_ptr)
+{
+    uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
+    uint64_t val = endpoint_ptr_get_epLock(ep_ptr);
+    assert(val == 0 || val == 1);
+    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+}
+
+static inline
+FORCE_INLINE
+void ep_free(endpoint_t *ep_ptr)
+{
+    uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
+    __atomic_clear(lock, __ATOMIC_RELEASE);
+}
+
 #ifdef CONFIG_SIGNAL_FASTPATH
 #ifdef CONFIG_ARCH_ARM
 static inline
@@ -354,6 +384,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
     /* Get the endpoint address */
     ep_ptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(ep_cap));
+    ep_lock(ep_ptr);
 
     /* Get the destination thread, which is only going to be valid
      * if the endpoint is valid. */
@@ -361,12 +392,14 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
     /* Check that there's a thread waiting to receive */
     if (unlikely(endpoint_ptr_get_state(ep_ptr) != EPState_Recv)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 
     /* ensure we are not single stepping the destination in ia32 */
 #if defined(CONFIG_HARDWARE_DEBUG_API) && defined(CONFIG_ARCH_IA32)
     if (unlikely(dest->tcbArch.tcbContext.breakpointState.single_step_enabled)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 #endif
@@ -379,6 +412,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
     /* Ensure that the destination has a valid VTable. */
     if (unlikely(! isValidVTableRoot_fp(newVTable))) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 
@@ -402,11 +436,13 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     asid_map_t asid_map = findMapForASID(asid);
     if (unlikely(asid_map_get_type(asid_map) != asid_map_asid_map_vspace ||
                  VSPACE_PTR(asid_map_asid_map_vspace_get_vspace_root(asid_map)) != cap_pd)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     /* Ensure the vmid is valid. */
     if (unlikely(!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map))) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
     /* vmids are the tags used instead of hw_asids in hyp mode */
@@ -426,6 +462,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     /* ensure only the idle thread or lower prio threads are present in the scheduler */
     if (unlikely(dest->tcbPriority < NODE_STATE(ksCurThread->tcbPriority) &&
                  !isHighestPrio(dom, dest->tcbPriority))) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 
@@ -433,27 +470,32 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
      * create the reply cap */
     if (unlikely(!cap_endpoint_cap_get_capCanGrant(ep_cap) &&
                  !cap_endpoint_cap_get_capCanGrantReply(ep_cap))) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 
 #ifdef CONFIG_ARCH_AARCH32
     if (unlikely(!pde_pde_invalid_get_stored_asid_valid(stored_hw_asid))) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 #endif
 
     /* Ensure the original caller is in the current domain and can be scheduled directly. */
     if (unlikely(dest->tcbDomain != ksCurDomain && 0 < maxDom)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 
 #ifdef CONFIG_KERNEL_MCS
     if (unlikely(dest->tcbSchedContext != NULL)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 
     reply_t *reply = thread_state_get_replyObject_np(dest->tcbState);
     if (unlikely(reply == NULL)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 #endif
@@ -461,6 +503,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 #ifdef ENABLE_SMP_SUPPORT
     /* Ensure both threads have the same affinity */
     if (unlikely(NODE_STATE(ksCurThread)->tcbAffinity != dest->tcbAffinity)) {
+        ep_free(ep_ptr);
         slowpath(SysCall);
     }
 #endif /* ENABLE_SMP_SUPPORT */
@@ -470,6 +513,10 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
      *
      * At this stage, we have committed to performing the IPC.
      */
+
+    // slowpath(SysCall);
+
+    // assert(false);
 
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = true;
@@ -530,6 +577,10 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
 
+
+    ep_free(ep_ptr);
+
+    NODE_READ_UNLOCK;
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
 
@@ -597,9 +648,11 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
     /* Get the endpoint address */
     ep_ptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(ep_cap));
+    ep_lock(ep_ptr);
 
     /* Check that there's not a thread waiting to send */
     if (unlikely(endpoint_ptr_get_state(ep_ptr) == EPState_Send)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -611,6 +664,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     if (unlikely(reply_ptr->replyTCB == NULL ||
                  call_stack_get_isHead(reply_ptr->replyNext) == 0 ||
                  SC_PTR(call_stack_get_callStackPtr(reply_ptr->replyNext)) != NODE_STATE(ksCurThread)->tcbSchedContext)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -621,6 +675,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     cte_t *callerSlot = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCaller);
     cap_t callerCap = callerSlot->cap;
     if (unlikely(!fastpath_reply_cap_check(callerCap))) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -631,6 +686,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* ensure we are not single stepping the caller in ia32 */
 #if defined(CONFIG_HARDWARE_DEBUG_API) && defined(CONFIG_ARCH_IA32)
     if (unlikely(caller->tcbArch.tcbContext.breakpointState.single_step_enabled)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 #endif
@@ -639,6 +695,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
        reply is generated instead. */
     fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -650,6 +707,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 
     /* Ensure that the destination has a valid MMU. */
     if (unlikely(! isValidVTableRoot_fp(newVTable))) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -671,11 +729,13 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     asid_map_t asid_map = findMapForASID(asid);
     if (unlikely(asid_map_get_type(asid_map) != asid_map_asid_map_vspace ||
                  VSPACE_PTR(asid_map_asid_map_vspace_get_vspace_root(asid_map)) != cap_pd)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     /* Ensure the vmid is valid. */
     if (unlikely(!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map))) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -693,23 +753,27 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* Ensure the original caller can be scheduled directly. */
     dom = maxDom ? ksCurDomain : 0;
     if (unlikely(!isHighestPrio(dom, caller->tcbPriority))) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
 #ifdef CONFIG_ARCH_AARCH32
     /* Ensure the HWASID is valid. */
     if (unlikely(!pde_pde_invalid_get_stored_asid_valid(stored_hw_asid))) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 #endif
 
     /* Ensure the original caller is in the current domain and can be scheduled directly. */
     if (unlikely(caller->tcbDomain != ksCurDomain && 0 < maxDom)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
 #ifdef CONFIG_KERNEL_MCS
     if (unlikely(caller->tcbSchedContext != NULL)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 #endif
@@ -717,6 +781,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #ifdef ENABLE_SMP_SUPPORT
     /* Ensure both threads have the same affinity */
     if (unlikely(NODE_STATE(ksCurThread)->tcbAffinity != caller->tcbAffinity)) {
+        ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 #endif /* ENABLE_SMP_SUPPORT */
@@ -731,6 +796,8 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
      *
      * At this stage, we have committed to performing the IPC.
      */
+
+    // slowpath(SysReplyRecv);
 
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = true;
@@ -816,6 +883,11 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     switchToThread_fp(caller, cap_pd, stored_hw_asid);
 
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
+
+    ep_free(ep_ptr);
+
+    // NODE_UNLOCK;
+    NODE_READ_UNLOCK;
 
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
