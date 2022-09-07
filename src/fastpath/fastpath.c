@@ -42,7 +42,6 @@ void ep_free(endpoint_t *ep_ptr)
     __atomic_clear(lock, __ATOMIC_RELEASE);
 }
 
-#ifdef CONFIG_SIGNAL_FASTPATH
 #ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE
@@ -341,7 +340,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     }
     UNREACHABLE();
 }
-#endif
 
 #ifdef CONFIG_ARCH_ARM
 static inline
