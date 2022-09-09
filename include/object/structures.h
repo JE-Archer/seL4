@@ -398,7 +398,7 @@ struct reply {
     call_stack_t replyNext;
 
     /* Unused, explicit padding to make struct size the correct power of 2. */
-    word_t padding;
+    word_t lock;
 };
 #endif
 
