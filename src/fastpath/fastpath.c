@@ -30,6 +30,24 @@ void ep_free(endpoint_t *ep_ptr)
     __atomic_clear(lock, __ATOMIC_RELEASE);
 }
 
+static inline
+FORCE_INLINE
+void ntfn_lock(notification_t *ntfn_ptr)
+{
+    uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
+    uint64_t val = notification_ptr_get_ntfnLock(ntfn_ptr);
+    (void)val;
+    assert(val == 0 || val == 1);
+    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+}
+
+static inline
+FORCE_INLINE
+void ntfn_free(notification_t *ntfn_ptr)
+{
+    uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
+    __atomic_clear(lock, __ATOMIC_RELEASE);
+}
 #ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE

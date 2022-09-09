@@ -251,15 +251,17 @@ block notification {
 #endif
 
 #if BF_CANONICAL_RANGE == 48
+    field state 2
     field_high ntfnQueue_tail 48
-    padding 14
+    padding 6
 #elif BF_CANONICAL_RANGE == 39
+    field state 2
     field_high ntfnQueue_tail 39
-    padding 23
+    padding 15
 #else
 #error "Unspecified canonical address range"
 #endif
-    field state 2
+    field ntfnLock 8
 }
 
 -- Mapping database (MDB) node: size = 16 bytes
