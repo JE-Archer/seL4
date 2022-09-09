@@ -65,6 +65,14 @@ void reply_free(reply_t *reply_ptr)
     uint8_t *lock = (uint8_t *)&reply_ptr->lock;
     __atomic_clear(lock, __ATOMIC_RELEASE);
 }
+
+
+static inline void ntfn_set_active_atomic(notification_t *ntfnPtr, word_t badge)
+{
+    notification_ptr_set_state(ntfnPtr, NtfnState_Active);
+    __atomic_or_fetch(&ntfnPtr->words[2], badge, __ATOMIC_SEQ_CST);
+}
+
 #ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE
@@ -111,7 +119,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
         ksKernelEntry.is_fastpath = true;
 #endif
-        ntfn_set_active(ntfnPtr, badge | notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
+        ntfn_set_active_atomic(ntfnPtr, badge | notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
         restore_user_context();
         UNREACHABLE();
     }
@@ -236,7 +244,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
 #endif
-            ntfn_set_active(ntfnPtr, badge);
+            ntfn_set_active_atomic(ntfnPtr, badge);
             restore_user_context();
             UNREACHABLE();
         }
