@@ -307,6 +307,15 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         }
     }
     case NtfnState_Waiting: {
+        if (!ntfn_try_lock(ntfnPtr)) {
+            ntfn_free(ntfnPtr);
+            slowpath(SysSend);
+        }
+        if (notification_ptr_get_state(ntfnPtr) != NtfnState_Waiting) {
+            ntfn_free(ntfnPtr);
+            slowpath(SysSend);
+        }
+
         tcb_t *dest = TCB_PTR(notification_ptr_get_ntfnQueue_head(ntfnPtr));
 
 
@@ -316,6 +325,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
         if (!dest->tcbSchedContext) {
             sc = SC_PTR(notification_ptr_get_ntfnSchedContext(ntfnPtr));
             if (sc == NULL || sc->scTcb != NULL) {
+                ntfn_free(ntfnPtr);
                 slowpath(SysSend);
             }
 
@@ -328,6 +338,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef ENABLE_SMP_SUPPORT
 #ifdef CONFIG_HAVE_FPU
             if (nativeThreadUsingFPU(dest)) {
+                ntfn_free(ntfnPtr);
                 slowpath(SysSend);
                 UNREACHABLE();
             }
@@ -339,6 +350,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
         /* Signal to higher prio thread is NOT fastpathed. Not sure if this handles idle thread */
         if (NODE_STATE_ON_CORE(ksCurThread, sc->scCore)->tcbPriority < dest->tcbPriority) {
+            ntfn_free(ntfnPtr);
             slowpath(SysSend);
         }
 
@@ -351,6 +363,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
         if (sc->scRefillMax > 0 && !thread_state_get_tcbInReleaseQueue(dest->tcbState)) {
             if (!(refill_ready(sc) && refill_sufficient(sc, 0))) {
+                ntfn_free(ntfnPtr);
                 slowpath(SysSend);
                 UNREACHABLE();
             }
@@ -409,6 +422,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
          * the slowpath doesn't seem to do anything special besides just not
          * not scheduling the dest thread. */
         if (schedulable) {
+            scheduler_lock(dest->tcbAffinity);
             if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                 SCHED_ENQUEUE(dest);
             } else {
@@ -417,7 +431,10 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                  * of priority */
                 SCHED_APPEND(dest);
             }
+            scheduler_lock(dest->tcbAffinity);
         }
+
+        ntfn_free(ntfnPtr);
 
         restore_user_context();
         UNREACHABLE();
