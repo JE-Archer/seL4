@@ -14,18 +14,6 @@
 
 static inline
 FORCE_INLINE
-void print_ep(endpoint_t *ep_ptr)
-{
-    uint8_t *data = ep_ptr;
-    printf("%p: ", ep_ptr);
-    for (int i = 0; i < 16; i++) {
-        printf("%02x ", data[i]);
-    }
-    printf("\n");
-}
-
-static inline
-FORCE_INLINE
 void ep_lock(endpoint_t *ep_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
