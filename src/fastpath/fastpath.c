@@ -42,6 +42,14 @@ void ep_lock(endpoint_t *ep_ptr)
 
 static inline
 FORCE_INLINE
+int ep_try_lock(endpoint_t *ep_ptr)
+{
+    uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
+    return __atomic_test_and_set(lock, __ATOMIC_ACQUIRE) == 0;
+}
+
+static inline
+FORCE_INLINE
 void ep_free(endpoint_t *ep_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
@@ -163,12 +171,21 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
         /* Check if we are bound and that thread is waiting for a message */
         if (dest && thread_state_ptr_get_tsType(&dest->tcbState) == ThreadState_BlockedOnReceive) {
+            endpoint_t *ep_ptr = EP_PTR(thread_state_get_blockingObject(dest->tcbState));
+            if (!ep_try_lock(ep_ptr)) {
+                slowpath(SysSend);
+            }
+            if (thread_state_ptr_get_tsType(&dest->tcbState) != ThreadState_BlockedOnReceive) {
+                ep_free(ep_ptr);
+                slowpath(SysSend);
+            }
             /* Basically equivalent to maybeDonateSchedContext. Check whether the thread already has
              * a SC or if one can be donated from the notification. If neither is true, go to
              * slowpath */
             if (!dest->tcbSchedContext) {
                 sc = SC_PTR(notification_ptr_get_ntfnSchedContext(ntfnPtr));
                 if (sc == NULL || sc->scTcb != NULL) {
+                    ep_free(ep_ptr);
                     slowpath(SysSend);
                     UNREACHABLE();
                 }
@@ -182,6 +199,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef ENABLE_SMP_SUPPORT
 #ifdef CONFIG_HAVE_FPU
                 if (nativeThreadUsingFPU(dest)) {
+                    ep_free(ep_ptr);
                     slowpath(SysSend);
                     UNREACHABLE();
                 }
@@ -193,6 +211,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
             /* Signal to higher prio thread is NOT fastpathed. Not sure if this handles idle thread */
             if (NODE_STATE_ON_CORE(ksCurThread, sc->scCore)->tcbPriority < dest->tcbPriority) {
+                ep_free(ep_ptr);
                 slowpath(SysSend);
             }
 
@@ -204,6 +223,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
             if (sc->scRefillMax > 0 && !thread_state_get_tcbInReleaseQueue(dest->tcbState)) {
                 if (!(refill_ready(sc) && refill_sufficient(sc, 0))) {
+                    ep_free(ep_ptr);
                     slowpath(SysSend);
                     UNREACHABLE();
                 }
@@ -220,9 +240,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #endif
 
             /* Equivalent to cancel_ipc */
-            endpoint_t *ep_ptr;
             tcb_queue_t queue;
-            ep_ptr = EP_PTR(thread_state_get_blockingObject(dest->tcbState));
 
             queue = ep_ptr_get_queue(ep_ptr);
             queue = tcbEPDequeue(dest, queue);
@@ -266,12 +284,16 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
              * the slowpath doesn't seem to do anything special besides just not
              * not scheduling the dest thread. */
             if (schedulable) {
+                scheduler_lock(dest->tcbAffinity);
                 if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                     SCHED_ENQUEUE(dest);
                 } else {
                     SCHED_APPEND(dest);
                 }
+                scheduler_free(dest->tcbAffinity);
             }
+
+            ep_free(ep_ptr);
 
             restore_user_context();
             UNREACHABLE();
