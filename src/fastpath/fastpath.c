@@ -43,6 +43,14 @@ void ntfn_lock(notification_t *ntfn_ptr)
 
 static inline
 FORCE_INLINE
+int ntfn_try_lock(notification_t *ntfn_ptr)
+{
+    uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
+    return __atomic_test_and_set(lock, __ATOMIC_ACQUIRE) == 0;
+}
+
+static inline
+FORCE_INLINE
 void ntfn_free(notification_t *ntfn_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
