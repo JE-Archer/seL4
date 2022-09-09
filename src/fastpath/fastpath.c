@@ -128,7 +128,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
         ksKernelEntry.is_fastpath = true;
 #endif
-        ntfn_set_active_atomic(ntfnPtr, badge | notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
+        ntfn_set_active_atomic(ntfnPtr, badge);
         restore_user_context();
         UNREACHABLE();
     }
