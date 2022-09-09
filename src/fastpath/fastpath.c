@@ -12,6 +12,24 @@
 #endif
 #include <benchmark/benchmark_utilisation.h>
 
+word_t scheduler_locks[8];
+
+static inline
+FORCE_INLINE
+void scheduler_lock(int node)
+{
+    uint8_t *lock = (uint8_t *)&scheduler_locks[node];
+    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+}
+
+static inline
+FORCE_INLINE
+void scheduler_free(int node)
+{
+    uint8_t *lock = (uint8_t *)&scheduler_locks[node];
+    __atomic_clear(lock, __ATOMIC_RELEASE);
+}
+
 static inline
 FORCE_INLINE
 void ep_lock(endpoint_t *ep_ptr)
