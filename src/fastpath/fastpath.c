@@ -60,6 +60,15 @@ void reply_lock(reply_t *reply_ptr)
 
 static inline
 FORCE_INLINE
+_Bool reply_try_lock(reply_t *reply_ptr)
+{
+    uint8_t *lock = (uint8_t *)&reply_ptr->lock;
+    assert(val == 0 || val == 1);
+    return __atomic_test_and_set(lock, __ATOMIC_ACQUIRE) == 0;
+}
+
+static inline
+FORCE_INLINE
 void reply_free(reply_t *reply_ptr)
 {
     uint8_t *lock = (uint8_t *)&reply_ptr->lock;
