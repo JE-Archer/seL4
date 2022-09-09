@@ -658,15 +658,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         slowpath(SysReplyRecv);
     }
 
-    /* Lookup the cap */
-    ep_cap = lookup_fp(TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCTable)->cap,
-                       cptr);
 
-    /* Check it's an endpoint */
-    if (unlikely(!cap_capType_equals(ep_cap, cap_endpoint_cap) ||
-                 !cap_endpoint_cap_get_capCanReceive(ep_cap))) {
-        slowpath(SysReplyRecv);
-    }
 
 #ifdef CONFIG_KERNEL_MCS
     /* lookup the reply object */
@@ -677,32 +669,18 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
         slowpath(SysReplyRecv);
     }
 #endif
-
-    /* Check there is nothing waiting on the notification */
-    if (unlikely(NODE_STATE(ksCurThread)->tcbBoundNotification &&
-                 notification_ptr_get_state(NODE_STATE(ksCurThread)->tcbBoundNotification) == NtfnState_Active)) {
-        slowpath(SysReplyRecv);
-    }
-
-    /* Get the endpoint address */
-    ep_ptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(ep_cap));
-    ep_lock(ep_ptr);
-
-    /* Check that there's not a thread waiting to send */
-    if (unlikely(endpoint_ptr_get_state(ep_ptr) == EPState_Send)) {
-        ep_free(ep_ptr);
-        slowpath(SysReplyRecv);
-    }
-
 #ifdef CONFIG_KERNEL_MCS
     /* Get the reply address */
     reply_t *reply_ptr = REPLY_PTR(cap_reply_cap_get_capReplyPtr(reply_cap));
+    if (!reply_try_lock(reply_ptr)) {
+        slowpath(SysReplyRecv);
+    }
     /* check that its valid and at the head of the call chain
        and that the current thread's SC is going to be donated. */
     if (unlikely(reply_ptr->replyTCB == NULL ||
                  call_stack_get_isHead(reply_ptr->replyNext) == 0 ||
                  SC_PTR(call_stack_get_callStackPtr(reply_ptr->replyNext)) != NODE_STATE(ksCurThread)->tcbSchedContext)) {
-        ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -713,7 +691,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     cte_t *callerSlot = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCaller);
     cap_t callerCap = callerSlot->cap;
     if (unlikely(!fastpath_reply_cap_check(callerCap))) {
-        ep_free(ep_ptr);
+        // ep_free(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -721,10 +699,40 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     caller = TCB_PTR(cap_reply_cap_get_capTCBPtr(callerCap));
 #endif
 
+        /* Lookup the cap */
+    ep_cap = lookup_fp(TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCTable)->cap,
+                       cptr);
+
+    /* Check it's an endpoint */
+    if (unlikely(!cap_capType_equals(ep_cap, cap_endpoint_cap) ||
+                 !cap_endpoint_cap_get_capCanReceive(ep_cap))) {
+        reply_free(reply_ptr);
+        slowpath(SysReplyRecv);
+    }
+
+    /* Check there is nothing waiting on the notification */
+    if (unlikely(NODE_STATE(ksCurThread)->tcbBoundNotification &&
+                 notification_ptr_get_state(NODE_STATE(ksCurThread)->tcbBoundNotification) == NtfnState_Active)) {
+        reply_free(reply_ptr);
+        slowpath(SysReplyRecv);
+    }
+
+    /* Get the endpoint address */
+    ep_ptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(ep_cap));
+    ep_lock(ep_ptr);
+
+    /* Check that there's not a thread waiting to send */
+    if (unlikely(endpoint_ptr_get_state(ep_ptr) == EPState_Send)) {
+        ep_free(ep_ptr);
+        reply_free(reply_ptr);
+        slowpath(SysReplyRecv);
+    }
+
     /* ensure we are not single stepping the caller in ia32 */
 #if defined(CONFIG_HARDWARE_DEBUG_API) && defined(CONFIG_ARCH_IA32)
     if (unlikely(caller->tcbArch.tcbContext.breakpointState.single_step_enabled)) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 #endif
@@ -734,6 +742,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     fault_type = seL4_Fault_get_seL4_FaultType(caller->tcbFault);
     if (unlikely(fault_type != seL4_Fault_NullFault)) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -746,6 +755,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* Ensure that the destination has a valid MMU. */
     if (unlikely(! isValidVTableRoot_fp(newVTable))) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -768,12 +778,14 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     if (unlikely(asid_map_get_type(asid_map) != asid_map_asid_map_vspace ||
                  VSPACE_PTR(asid_map_asid_map_vspace_get_vspace_root(asid_map)) != cap_pd)) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     /* Ensure the vmid is valid. */
     if (unlikely(!asid_map_asid_map_vspace_get_stored_vmid_valid(asid_map))) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -792,6 +804,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     dom = maxDom ? ksCurDomain : 0;
     if (unlikely(!isHighestPrio(dom, caller->tcbPriority))) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -799,6 +812,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* Ensure the HWASID is valid. */
     if (unlikely(!pde_pde_invalid_get_stored_asid_valid(stored_hw_asid))) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 #endif
@@ -806,12 +820,14 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* Ensure the original caller is in the current domain and can be scheduled directly. */
     if (unlikely(caller->tcbDomain != ksCurDomain && 0 < maxDom)) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 
 #ifdef CONFIG_KERNEL_MCS
     if (unlikely(caller->tcbSchedContext != NULL)) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 #endif
@@ -820,6 +836,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     /* Ensure both threads have the same affinity */
     if (unlikely(NODE_STATE(ksCurThread)->tcbAffinity != caller->tcbAffinity)) {
         ep_free(ep_ptr);
+        reply_free(reply_ptr);
         slowpath(SysReplyRecv);
     }
 #endif /* ENABLE_SMP_SUPPORT */
@@ -923,6 +940,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     msgInfo = wordFromMessageInfo(seL4_MessageInfo_set_capsUnwrapped(info, 0));
 
     ep_free(ep_ptr);
+    reply_free(reply_ptr);
 
     // NODE_UNLOCK;
     NODE_READ_UNLOCK;
