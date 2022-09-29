@@ -61,8 +61,58 @@ void ipiStallCoreCallback(bool_t irqPath)
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
         while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
             __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            if (clh_is_ipi_pending(getCurrentCPUIndex())) {
+
+                /* Multiple calls for similar reason could result in stack overflow */
+                assert((IpiRemoteCall_t)remoteCall != IpiRemoteCall_Stall);
+                handleIPI(CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_remote_call_ipi), irqPath);
+            }
             arch_pause();
         }
+
+        /* make sure no resource access passes from this point */
+        asm volatile("" ::: "memory");
+
+        /* Start idle thread to capture the pending IPI */
+        activateThread();
+        restore_user_context();
+    } else if (big_kernel_lock.node_read_state[getCurrentCPUIndex()].waiting_on_read_lock) {
+        int cpu = getCurrentCPUIndex();
+        if (thread_state_ptr_get_tsType(&NODE_STATE(ksCurThread)->tcbState) == ThreadState_Running) {
+            setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        }
+
+        SCHED_ENQUEUE_CURRENT_TCB;
+        switchToIdleThread();
+#ifdef CONFIG_KERNEL_MCS
+        commitTime();
+        NODE_STATE(ksCurSC) = NODE_STATE(ksIdleThread)->tcbSchedContext;
+#endif
+        NODE_STATE(ksSchedulerAction) = SchedulerAction_ResumeCurrentThread;
+
+        /* Let the cpu requesting this IPI to continue while we waiting on lock */
+        big_kernel_lock.node_owners[getCurrentCPUIndex()].ipi = 0;
+#ifdef CONFIG_ARCH_RISCV
+        ipi_clear_irq(irq_remote_call_ipi);
+#endif
+        ipi_wait(totalCoreBarrier);
+
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        while (big_kernel_lock.completed_writer_turn.turn != big_kernel_lock.node_read_state[cpu].observed_writer_turn) {
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            if (clh_is_ipi_pending(cpu)) {
+                /* we only handle irq_remote_call_ipi here as other type of IPIs
+                 * are async and could be delayed. 'handleIPI' may not return
+                 * based on value of the 'irqPath'. */
+                handleIPI(CORE_IRQ_TO_IRQT(cpu, irq_remote_call_ipi), false);
+                /* We do not need to perform a memory release here as we would have only modified
+                 * local state that we do not need to make visible */
+            }
+            arch_pause();
+        }
+
+        big_kernel_lock.node_read_state[cpu].own_read_lock = true;
+        big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = false;
 
         /* make sure no resource access passes from this point */
         asm volatile("" ::: "memory");
