@@ -161,7 +161,7 @@ void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 ALIGN(L1_CACHE_LINE_SIZE)
 void VISIBLE c_handle_fastpath_signal(word_t cptr, word_t msgInfo)
 {
-    NODE_LOCK_SYS;
+    NODE_READ_LOCK;
 
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
