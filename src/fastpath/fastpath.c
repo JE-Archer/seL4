@@ -329,7 +329,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
     }
     case NtfnState_Waiting: {
         if (!ntfn_try_lock(ntfnPtr)) {
-            ntfn_free(ntfnPtr);
             slowpath(SysSend);
         }
         if (notification_ptr_get_state(ntfnPtr) != NtfnState_Waiting) {
@@ -452,7 +451,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                  * of priority */
                 SCHED_APPEND(dest);
             }
-            scheduler_lock(dest->tcbAffinity);
+            scheduler_free(dest->tcbAffinity);
         }
 
         ntfn_free(ntfnPtr);
