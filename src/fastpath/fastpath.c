@@ -19,7 +19,19 @@ FORCE_INLINE
 void scheduler_lock(int node)
 {
     uint8_t *lock = (uint8_t *)&scheduler_locks[node];
-    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+    while (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST));
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+static inline
+FORCE_INLINE
+int scheduler_try_lock(int node)
+{
+    uint8_t *lock = (uint8_t *)&scheduler_locks[node];
+    if (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST))
+        return 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return 1;
 }
 
 static inline
@@ -27,7 +39,8 @@ FORCE_INLINE
 void scheduler_free(int node)
 {
     uint8_t *lock = (uint8_t *)&scheduler_locks[node];
-    __atomic_clear(lock, __ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_clear(lock, __ATOMIC_SEQ_CST);
 }
 
 static inline
@@ -35,7 +48,8 @@ FORCE_INLINE
 void ep_lock(endpoint_t *ep_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
-    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+    while (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST));
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 static inline
@@ -43,7 +57,10 @@ FORCE_INLINE
 int ep_try_lock(endpoint_t *ep_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
-    return __atomic_test_and_set(lock, __ATOMIC_ACQUIRE) == 0;
+    if (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST) != 0)
+        return 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return 1;
 }
 
 static inline
@@ -51,7 +68,8 @@ FORCE_INLINE
 void ep_free(endpoint_t *ep_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ep_ptr->words[0])[0];
-    __atomic_clear(lock, __ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_clear(lock, __ATOMIC_SEQ_CST);
 }
 
 static inline
@@ -59,7 +77,8 @@ FORCE_INLINE
 void ntfn_lock(notification_t *ntfn_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
-    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+    while (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST));
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 static inline
@@ -67,7 +86,10 @@ FORCE_INLINE
 int ntfn_try_lock(notification_t *ntfn_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
-    return __atomic_test_and_set(lock, __ATOMIC_ACQUIRE) == 0;
+    if (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST) != 0)
+        return 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return 1;
 }
 
 static inline
@@ -75,7 +97,8 @@ FORCE_INLINE
 void ntfn_free(notification_t *ntfn_ptr)
 {
     uint8_t *lock = &((uint8_t *)&ntfn_ptr->words[0])[0];
-    __atomic_clear(lock, __ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_clear(lock, __ATOMIC_SEQ_CST);
 }
 
 static inline
@@ -83,7 +106,8 @@ FORCE_INLINE
 void reply_lock(reply_t *reply_ptr)
 {
     uint8_t *lock = (uint8_t *)&reply_ptr->lock;
-    while (__atomic_test_and_set(lock, __ATOMIC_ACQUIRE));
+    while (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST));
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 static inline
@@ -91,7 +115,10 @@ FORCE_INLINE
 _Bool reply_try_lock(reply_t *reply_ptr)
 {
     uint8_t *lock = (uint8_t *)&reply_ptr->lock;
-    return __atomic_test_and_set(lock, __ATOMIC_ACQUIRE) == 0;
+    if (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST) != 0)
+        return 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return 1;
 }
 
 static inline
@@ -99,13 +126,15 @@ FORCE_INLINE
 void reply_free(reply_t *reply_ptr)
 {
     uint8_t *lock = (uint8_t *)&reply_ptr->lock;
-    __atomic_clear(lock, __ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_clear(lock, __ATOMIC_SEQ_CST);
 }
 
 static inline void ntfn_set_active_atomic(notification_t *ntfnPtr, word_t badge)
 {
     notification_ptr_set_state(ntfnPtr, NtfnState_Active);
     __atomic_or_fetch(&ntfnPtr->words[2], badge, __ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 #ifdef CONFIG_ARCH_ARM
