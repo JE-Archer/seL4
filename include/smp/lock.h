@@ -80,8 +80,8 @@ static inline void *sel4_atomic_exchange(void *ptr, bool_t
 {
     clh_qnode_t *prev;
 
-    if (memorder == __ATOMIC_RELEASE || memorder == __ATOMIC_ACQ_REL) {
-        __atomic_thread_fence(__ATOMIC_RELEASE);
+    if (memorder == __ATOMIC_SEQ_CST || memorder == __ATOMIC_ACQ_REL) {
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
     } else if (memorder == __ATOMIC_SEQ_CST) {
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
@@ -99,8 +99,8 @@ static inline void *sel4_atomic_exchange(void *ptr, bool_t
         arch_pause();
     }
 
-    if (memorder == __ATOMIC_ACQUIRE || memorder == __ATOMIC_ACQ_REL) {
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    if (memorder == __ATOMIC_SEQ_CST || memorder == __ATOMIC_ACQ_REL) {
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
     } else if (memorder == __ATOMIC_SEQ_CST) {
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
@@ -122,7 +122,7 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
     while (big_kernel_lock.node_owners[cpu].next->value != CLHState_Granted) {
         /* As we are in a loop we need to ensure that any loads of future iterations of the
          * loop are performed after this one */
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
         if (clh_is_ipi_pending(cpu)) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
@@ -135,9 +135,9 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
     }
 
     big_kernel_lock.current_writer_turn.turn = !big_kernel_lock.current_writer_turn.turn;
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
         if (clh_is_ipi_pending(cpu)) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
@@ -150,16 +150,16 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
     }
 
     /* make sure no resource access passes from this point */
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 static inline void FORCE_INLINE clh_lock_release(word_t cpu)
 {
     /* make sure no resource access passes from this point */
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
     big_kernel_lock.completed_writer_turn.turn = !big_kernel_lock.completed_writer_turn.turn;
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
     big_kernel_lock.node_owners[cpu].node->value = CLHState_Granted;
     big_kernel_lock.node_owners[cpu].node =
@@ -169,14 +169,14 @@ static inline void FORCE_INLINE clh_lock_release(word_t cpu)
 static inline void FORCE_INLINE clh_lock_read_acquire(word_t cpu)
 {
     big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = true;
-    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[0].count, 1, __ATOMIC_ACQUIRE);
-    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[1].count, 1, __ATOMIC_ACQUIRE);
+    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[0].count, 1, __ATOMIC_SEQ_CST);
+    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[1].count, 1, __ATOMIC_SEQ_CST);
     big_kernel_lock.node_read_state[cpu].observed_writer_turn = big_kernel_lock.current_writer_turn.turn;
-    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[!big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_ACQUIRE);
+    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[!big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_SEQ_CST);
 
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     while (big_kernel_lock.completed_writer_turn.turn != big_kernel_lock.node_read_state[cpu].observed_writer_turn) {
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
         if (clh_is_ipi_pending(cpu)) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
@@ -190,12 +190,20 @@ static inline void FORCE_INLINE clh_lock_read_acquire(word_t cpu)
 
     big_kernel_lock.node_read_state[cpu].own_read_lock = true;
     big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = false;
+
+    /* make sure no resource access passes from this point */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 static inline void FORCE_INLINE clh_lock_read_release(word_t cpu)
 {
-    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_RELEASE);
+    /* make sure no resource access passes from this point */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
+__atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     big_kernel_lock.node_read_state[cpu].own_read_lock = false;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
