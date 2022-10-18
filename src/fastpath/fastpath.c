@@ -319,7 +319,13 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
 #ifdef ENABLE_SMP_SUPPORT
             /* The part of migrateTCB() that doesn't involve the slowpathed FPU save */
+#ifdef CONFIG_DEBUG_BUILD
+            tcbDebugRemove(dest);
+#endif
             dest->tcbAffinity = sc->scCore;
+#ifdef CONFIG_DEBUG_BUILD
+            tcbDebugAppend(dest);
+#endif
 #endif
 
             /* Left this in the same form as the slowpath. Not sure if optimal */
@@ -455,7 +461,13 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
 
 #ifdef ENABLE_SMP_SUPPORT
         /* The part of migrateTCB() that doesn't involve the slowpathed FPU save */
+#ifdef CONFIG_DEBUG_BUILD
+        tcbDebugRemove(dest);
+#endif
         dest->tcbAffinity = sc->scCore;
+#ifdef CONFIG_DEBUG_BUILD
+        tcbDebugAppend(dest);
+#endif
 #endif
 
 
