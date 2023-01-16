@@ -200,7 +200,7 @@ static inline void FORCE_INLINE clh_lock_read_release(word_t cpu)
     /* make sure no resource access passes from this point */
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
-__atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_SEQ_CST);
+    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_SEQ_CST);
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     big_kernel_lock.node_read_state[cpu].own_read_lock = false;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);

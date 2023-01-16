@@ -70,6 +70,7 @@ NODE_STATE_DECLARE(time_t, ksCurTime);
 NODE_STATE_DECLARE(bool_t, ksReprogram);
 NODE_STATE_DECLARE(sched_context_t, *ksCurSC);
 NODE_STATE_DECLARE(sched_context_t, *ksIdleSC);
+NODE_STATE_DECLARE(word_t, ksSyscallNumber);
 #endif
 
 #ifdef CONFIG_HAVE_FPU

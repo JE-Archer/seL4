@@ -11,6 +11,9 @@
 
 void sendSignal(notification_t *ntfnPtr, word_t badge);
 void receiveSignal(tcb_t *thread, cap_t cap, bool_t isBlocking);
+#ifdef CONFIG_KERNEL_MCS
+void receiveSignalShared(tcb_t *thread, cap_t cap, bool_t isBlocking);
+#endif
 void cancelAllSignals(notification_t *ntfnPtr);
 void cancelSignal(tcb_t *threadPtr, notification_t *ntfnPtr);
 void completeSignal(notification_t *ntfnPtr, tcb_t *tcb);

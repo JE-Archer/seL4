@@ -18,9 +18,13 @@
 
 #ifdef CONFIG_KERNEL_MCS
 #define MCS_DO_IF_BUDGET(_block) \
+    scheduler_lock_acquire(getCurrentCPUIndex()); \
     updateTimestamp(); \
     if (likely(checkBudgetRestart())) { \
+        scheduler_lock_release(getCurrentCPUIndex()); \
         _block \
+    } else { \
+        scheduler_lock_release(getCurrentCPUIndex()); \
     }
 #else
 #define MCS_DO_IF_BUDGET(_block) \
@@ -30,6 +34,10 @@
 #endif
 
 exception_t handleSyscall(syscall_t syscall);
+#ifdef CONFIG_KERNEL_MCS
+exception_t handleSyscallShared(syscall_t syscall);
+void retry_syscall_exclusive(void);
+#endif
 exception_t handleInterruptEntry(void);
 exception_t handleUnknownSyscall(word_t w);
 exception_t handleUserLevelFault(word_t w_a, word_t w_b);

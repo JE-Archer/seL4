@@ -128,15 +128,38 @@ void NORETURN slowpath(syscall_t syscall)
 
 void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
-    NODE_LOCK_SYS;
+    NODE_STATE(ksSyscallNumber) = syscall;
 
+#ifdef CONFIG_KERNEL_MCS
+    // int exclusive = !(syscall == SysNBWait || syscall == SysWait);
+    int exclusive = 1;
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
+    if (exclusive) {
+#endif
+        NODE_LOCK_SYS;
+#ifdef CONFIG_KERNEL_MCS
+    } else {
+        NODE_READ_LOCK;
+    }
+#endif
     c_entry_hook();
 #ifdef TRACK_KERNEL_ENTRIES
     benchmark_debug_syscall_start(cptr, msgInfo, syscall);
     ksKernelEntry.is_fastpath = 0;
 #endif /* DEBUG */
 
-    slowpath(syscall);
+#ifdef CONFIG_KERNEL_MCS
+    if (exclusive) {
+#endif
+        slowpath(syscall);
+#ifdef CONFIG_KERNEL_MCS
+    } else {
+        handleSyscallShared(syscall);
+        restore_user_context();
+    }
+#endif
     UNREACHABLE();
 }
 
@@ -144,6 +167,8 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 ALIGN(L1_CACHE_LINE_SIZE)
 void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 {
+    NODE_STATE(ksSyscallNumber) = SysCall;
+
     NODE_READ_LOCK;
 
     c_entry_hook();
@@ -161,6 +186,8 @@ void VISIBLE c_handle_fastpath_call(word_t cptr, word_t msgInfo)
 ALIGN(L1_CACHE_LINE_SIZE)
 void VISIBLE c_handle_fastpath_signal(word_t cptr, word_t msgInfo)
 {
+    NODE_STATE(ksSyscallNumber) = SysSend;
+
     NODE_READ_LOCK;
 
     c_entry_hook();
@@ -181,6 +208,8 @@ void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo, word_t re
 void VISIBLE c_handle_fastpath_reply_recv(word_t cptr, word_t msgInfo)
 #endif
 {
+    NODE_STATE(ksSyscallNumber) = SysReplyRecv;
+
     NODE_READ_LOCK;
     // NODE_LOCK_SYS;
 

@@ -187,6 +187,59 @@ void sendSignal(notification_t *ntfnPtr, word_t badge)
     }
 }
 
+#ifdef CONFIG_KERNEL_MCS
+void receiveSignalShared(tcb_t *thread, cap_t cap, bool_t isBlocking)
+{
+    notification_t *ntfnPtr;
+    
+    ntfnPtr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(cap));
+    ntfn_lock_acquire(ntfnPtr);
+
+    switch (notification_ptr_get_state(ntfnPtr)) {
+    case NtfnState_Idle:
+    case NtfnState_Waiting:
+        if (isBlocking) {
+            tcb_queue_t ntfn_queue;
+            /* Block thread on notification object */
+            thread_state_ptr_set_tsType(&thread->tcbState,
+                                        ThreadState_BlockedOnNotification);
+            thread_state_ptr_set_blockingObject(&thread->tcbState,
+                                                NTFN_REF(ntfnPtr));
+
+            scheduler_lock_acquire(getCurrentCPUIndex());
+            scheduleTCB(thread);
+
+            /* Enqueue TCB */
+            ntfn_queue = ntfn_ptr_get_queue(ntfnPtr);
+            ntfn_queue = tcbEPAppend(thread, ntfn_queue);
+
+            notification_ptr_set_state(ntfnPtr, NtfnState_Waiting);
+            ntfn_ptr_set_queue(ntfnPtr, ntfn_queue);
+
+            maybeReturnSchedContext(ntfnPtr, thread);
+            scheduler_lock_release(getCurrentCPUIndex());
+        } else {
+            doNBRecvFailedTransfer(thread);
+        }
+        break;
+    case NtfnState_Active:
+        setRegister(
+            thread, badgeRegister,
+            notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
+        notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
+        maybeDonateSchedContext(thread, ntfnPtr);
+        // If the SC has been donated to the current thread (in a reply_recv, send_recv scenario) then
+        // we may need to perform refill_unblock_check if the SC is becoming activated.
+        if (thread->tcbSchedContext != NODE_STATE(ksCurSC) && sc_sporadic(thread->tcbSchedContext)) {
+            refill_unblock_check(thread->tcbSchedContext);
+        }
+        break;
+    }
+
+    ntfn_lock_release(ntfnPtr);
+}
+#endif
+
 void receiveSignal(tcb_t *thread, cap_t cap, bool_t isBlocking)
 {
     notification_t *ntfnPtr;

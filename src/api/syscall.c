@@ -400,6 +400,46 @@ static void handleReply(void)
 #endif
 
 #ifdef CONFIG_KERNEL_MCS
+static void handleRecvCantReplyShared(bool_t isBlocking)
+{
+    word_t epCPtr;
+    lookupCap_ret_t lu_ret;
+
+    epCPtr = getRegister(NODE_STATE(ksCurThread), capRegister);
+
+    lu_ret = lookupCap(NODE_STATE(ksCurThread), epCPtr);
+
+    if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+        retry_syscall_exclusive();
+    }
+
+    switch (cap_get_capType(lu_ret.cap)) {
+    case cap_endpoint_cap:
+        retry_syscall_exclusive();
+        break;
+
+    case cap_notification_cap: {
+        notification_t *ntfnPtr;
+        tcb_t *boundTCB;
+        ntfnPtr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap));
+        boundTCB = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr);
+        if (unlikely(!cap_notification_cap_get_capNtfnCanReceive(lu_ret.cap)
+                     || (boundTCB && boundTCB != NODE_STATE(ksCurThread)))) {
+            retry_syscall_exclusive();
+            break;
+        }
+
+        receiveSignalShared(NODE_STATE(ksCurThread), lu_ret.cap, isBlocking);
+        break;
+    }
+    default:
+        retry_syscall_exclusive();
+        break;
+    }
+}
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 static void handleRecv(bool_t isBlocking, bool_t canReply)
 #else
 static void handleRecv(bool_t isBlocking)
@@ -510,6 +550,71 @@ static void handleYield(void)
     rescheduleRequired();
 #endif
 }
+
+#ifdef CONFIG_KERNEL_MCS
+exception_t handleSyscallShared(syscall_t syscall)
+{
+    MCS_DO_IF_BUDGET({
+        switch (syscall)
+        {
+        case SysSend: {
+            fail("shared-access SysSend not implemented");
+            break;
+        }
+        case SysNBSend: {
+            fail("shared-access SysNBSend not implemented");
+            break;
+        }
+        case SysCall: {
+            fail("shared-access SysCall not implemented");
+            break;
+        }
+        case SysRecv: {
+            fail("shared-access SysRecv not implemented");
+            break;
+        }
+        case SysWait: {
+            handleRecvCantReplyShared(true);
+            break;
+        }
+        case SysNBWait: {
+            handleRecvCantReplyShared(false);
+            break;
+        }
+        case SysReplyRecv: {
+            fail("shared-access SysReplyRecv not implemented");
+            break;
+        }
+        case SysNBSendRecv: {
+            fail("shared-access SysNBSendRecv not implemented");
+            break;
+        }
+        case SysNBSendWait: {
+            fail("shared-access SysNBSendWait not implemented");
+            break;
+        }
+        case SysNBRecv: {
+            fail("shared-access SysNBRecv not implemented");
+            break;
+        }
+        case SysYield: {
+            fail("shared-access SysYield not implemented");
+            break;
+        }
+        default: {
+            fail("Invalid syscall");
+        }
+        }
+
+    })
+
+    scheduler_lock_acquire(getCurrentCPUIndex());
+    schedule();
+    activateThread();
+    scheduler_lock_release(getCurrentCPUIndex());
+    return EXCEPTION_NONE;
+}
+#endif
 
 exception_t handleSyscall(syscall_t syscall)
 {
@@ -629,3 +734,13 @@ exception_t handleSyscall(syscall_t syscall)
 
     return EXCEPTION_NONE;
 }
+
+#ifdef CONFIG_KERNEL_MCS
+void retry_syscall_exclusive(void)
+{
+    NODE_TAKE_WRITE_IF_READ_HELD;
+    handleSyscall(NODE_STATE(ksSyscallNumber));
+    restore_user_context();
+    UNREACHABLE();
+}
+#endif
