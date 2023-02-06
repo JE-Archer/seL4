@@ -10,8 +10,6 @@
 
 #ifdef ENABLE_SMP_SUPPORT
 
-word_t scheduler_locks[8];
-
 void migrateTCB(tcb_t *tcb, word_t new_core)
 {
 #ifdef CONFIG_DEBUG_BUILD

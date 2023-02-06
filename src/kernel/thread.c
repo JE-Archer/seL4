@@ -605,8 +605,10 @@ void chargeBudget(ticks_t consumed, bool_t canTimeoutFault)
     NODE_STATE(ksConsumed) = 0;
     if (likely(isSchedulable(NODE_STATE(ksCurThread)))) {
         assert(NODE_STATE(ksCurThread)->tcbSchedContext == NODE_STATE(ksCurSC));
+        scheduler_lock_acquire(getCurrentCPUIndex());
         endTimeslice(canTimeoutFault);
         rescheduleRequired();
+        scheduler_lock_release(getCurrentCPUIndex());
         NODE_STATE(ksReprogram) = true;
     }
 }

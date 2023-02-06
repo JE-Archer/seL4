@@ -610,8 +610,8 @@ exception_t handleSyscallShared(syscall_t syscall)
 
     scheduler_lock_acquire(getCurrentCPUIndex());
     schedule();
-    activateThread();
     scheduler_lock_release(getCurrentCPUIndex());
+    activateThread();
     return EXCEPTION_NONE;
 }
 #endif

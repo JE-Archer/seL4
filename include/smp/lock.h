@@ -70,6 +70,9 @@ typedef struct clh_lock {
 extern clh_lock_t big_kernel_lock;
 BOOT_CODE void clh_lock_init(void);
 
+extern word_t scheduler_locks[CONFIG_MAX_NUM_NODES];
+extern word_t scheduler_locks_held_by_node[CONFIG_MAX_NUM_NODES][CONFIG_MAX_NUM_NODES];
+
 static inline bool_t FORCE_INLINE clh_is_ipi_pending(word_t cpu)
 {
     return big_kernel_lock.node_owners[cpu].ipi == 1;
@@ -266,3 +269,103 @@ static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
 #define NODE_READ_LOCK NODE_READ_LOCK_
 #define NODE_READ_UNLOCK NODE_READ_UNLOCK_
 #define NODE_TAKE_WRITE_IF_READ_HELD NODE_TAKE_WRITE_IF_READ_HELD_
+
+static bool_t clh_is_self_in_queue(void);
+
+static inline
+FORCE_INLINE
+void spinlock_acquire(uint8_t *lock)
+{
+    if (clh_is_self_in_queue())
+        return;
+    while (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST));
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+static inline
+FORCE_INLINE
+int spinlock_try_acquire(uint8_t *lock)
+{
+    if (clh_is_self_in_queue())
+        return 1;
+    if (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST))
+        return 0;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return 1;
+}
+
+static inline
+FORCE_INLINE
+void spinlock_release(uint8_t *lock)
+{
+    if (clh_is_self_in_queue())
+        return;
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_clear(lock, __ATOMIC_SEQ_CST);
+}
+
+#ifndef DISABLE_SCHEDULER_LOCKS
+#define scheduler_lock_get(node) ((uint8_t *)&scheduler_locks[node])
+
+static inline
+FORCE_INLINE
+void scheduler_lock_acquire(seL4_Word node)
+{
+    if (clh_is_self_in_queue())
+        return;
+    if (scheduler_locks_held_by_node[getCurrentCPUIndex()][node] != 0) {
+        scheduler_locks_held_by_node[getCurrentCPUIndex()][node]++;
+        return;
+    }
+    spinlock_acquire(scheduler_lock_get(node));
+    scheduler_locks_held_by_node[getCurrentCPUIndex()][node] = 1;
+}
+
+static inline
+FORCE_INLINE
+void scheduler_lock_release(seL4_Word node)
+{
+    if (clh_is_self_in_queue())
+        return;
+    scheduler_locks_held_by_node[getCurrentCPUIndex()][node]--;
+    if (scheduler_locks_held_by_node[getCurrentCPUIndex()][node] == 0) {
+        spinlock_release(scheduler_lock_get(node));
+    }
+}
+#else
+void scheduler_lock_acquire(seL4_Word core) {}
+void scheduler_lock_release(seL4_Word core) {}
+#endif
+
+#ifndef DISABLE_ENDPOINT_LOCKS
+#define ep_lock_get(ep_ptr) (&((uint8_t *)&(ep_ptr)->words[0])[0])
+#define ep_lock_acquire(ep_ptr) do { spinlock_acquire(ep_lock_get(ep_ptr)); } while (0);
+#define ep_lock_try_acquire(ep_ptr) (spinlock_try_acquire(ep_lock_get(ep_ptr)))
+#define ep_lock_release(ep_ptr) do { spinlock_release(ep_lock_get(ep_ptr)); } while (0);
+#else
+#define ep_lock_acquire(ep_ptr) {}
+#define ep_lock_try_acquire(ep_ptr) (1)
+#define ep_lock_release(ep_ptr) {}
+#endif
+
+#ifndef DISABLE_NOTIFICATION_LOCKS
+#define ntfn_lock_get(ntfn_ptr) (&((uint8_t *)&ntfn_ptr->words[0])[0])
+#define ntfn_lock_acquire(ntfn_ptr) do { spinlock_acquire(ntfn_lock_get(ntfn_ptr)); } while (0);
+#define ntfn_lock_try_acquire(ntfn_ptr) (spinlock_try_acquire(ntfn_lock_get(ntfn_ptr)))
+#define ntfn_lock_release(ntfn_ptr) do { spinlock_release(ntfn_lock_get(ntfn_ptr)); } while (0);
+#else
+#define ntfn_lock_acquire(ntfn_ptr) {}
+#define ntfn_lock_try_acquire(ntfn_ptr) (1)
+#define ntfn_lock_release(ntfn_ptr) {}
+#endif
+
+#ifndef DISABLE_REPLY_OBJECT_LOCKS
+#define reply_object_lock_get(reply_ptr) ((uint8_t *)&reply_ptr->lock)
+#define reply_object_lock_acquire(reply_ptr) do { spinlock_acquire(reply_object_lock_get(reply_ptr)); } while (0);
+#define reply_object_lock_try_acquire(reply_ptr) (spinlock_try_acquire(reply_object_lock_get(reply_ptr)))
+#define reply_object_lock_release(reply_ptr) do { spinlock_release(reply_object_lock_get(reply_ptr)); } while (0);
+#else
+#define reply_object_lock_acquire(reply_ptr) {}
+#define reply_object_lock_try_acquire(reply_ptr) (1)
+#define reply_object_lock_release(reply_ptr) {}
+#endif

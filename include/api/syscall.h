@@ -18,13 +18,9 @@
 
 #ifdef CONFIG_KERNEL_MCS
 #define MCS_DO_IF_BUDGET(_block) \
-    scheduler_lock_acquire(getCurrentCPUIndex()); \
     updateTimestamp(); \
     if (likely(checkBudgetRestart())) { \
-        scheduler_lock_release(getCurrentCPUIndex()); \
         _block \
-    } else { \
-        scheduler_lock_release(getCurrentCPUIndex()); \
     }
 #else
 #define MCS_DO_IF_BUDGET(_block) \

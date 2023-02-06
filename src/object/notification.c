@@ -191,7 +191,7 @@ void sendSignal(notification_t *ntfnPtr, word_t badge)
 void receiveSignalShared(tcb_t *thread, cap_t cap, bool_t isBlocking)
 {
     notification_t *ntfnPtr;
-    
+
     ntfnPtr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(cap));
     ntfn_lock_acquire(ntfnPtr);
 
@@ -227,7 +227,9 @@ void receiveSignalShared(tcb_t *thread, cap_t cap, bool_t isBlocking)
             thread, badgeRegister,
             notification_ptr_get_ntfnMsgIdentifier(ntfnPtr));
         notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
+        scheduler_lock_acquire(getCurrentCPUIndex());
         maybeDonateSchedContext(thread, ntfnPtr);
+        scheduler_lock_release(getCurrentCPUIndex());
         // If the SC has been donated to the current thread (in a reply_recv, send_recv scenario) then
         // we may need to perform refill_unblock_check if the SC is becoming activated.
         if (thread->tcbSchedContext != NODE_STATE(ksCurSC) && sc_sporadic(thread->tcbSchedContext)) {
