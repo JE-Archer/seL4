@@ -131,8 +131,7 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
     NODE_STATE(ksSyscallNumber) = syscall;
 
 #ifdef CONFIG_KERNEL_MCS
-    // int exclusive = !(syscall == SysNBWait || syscall == SysWait);
-    int exclusive = 1;
+    int exclusive = !(syscall == SysNBWait || syscall == SysWait || syscall == SysNBSend);
 #endif
 
 #ifdef CONFIG_KERNEL_MCS

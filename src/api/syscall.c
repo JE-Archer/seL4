@@ -257,6 +257,56 @@ exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType)
 }
 
 #ifdef CONFIG_KERNEL_MCS
+static exception_t handleNBSend(void)
+{
+    lookupCap_ret_t lu_ret;
+    tcb_t *thread;
+    word_t cptr;
+
+    thread = NODE_STATE(ksCurThread);
+    cptr = getRegister(thread, capRegister);
+
+    /* faulting section */
+    lu_ret = lookupCap(NODE_STATE(ksCurThread), cptr);
+
+    if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+        userError("Invocation of invalid cap #%lu.", cptr);
+        current_fault = seL4_Fault_CapFault_new(cptr, false);
+
+        return EXCEPTION_NONE;
+    }
+
+    if (cap_get_capType(lu_ret.cap) == cap_notification_cap) {
+        if (unlikely(!cap_notification_cap_get_capNtfnCanSend(lu_ret.cap))) {
+            userError("Attempted to invoke a read-only notification cap #%lu.",
+                      cptr);
+            current_syscall_error.type = seL4_InvalidCapability;
+            current_syscall_error.invalidCapNumber = 0;
+            return EXCEPTION_SYSCALL_ERROR;
+        }
+
+        if (notification_ptr_get_ntfnBoundTCB(NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap)))) {
+            retry_syscall_exclusive();
+        }
+
+        setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
+        sendSignalShared(
+                   NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap)),
+                   cap_notification_cap_get_capNtfnBadge(lu_ret.cap));
+    } else {
+        retry_syscall_exclusive();
+    }
+
+    if (unlikely(
+            thread_state_get_tsType(thread->tcbState) == ThreadState_Restart)) {
+        setThreadState(thread, ThreadState_Running);
+    }
+
+    return EXCEPTION_NONE;
+}
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 static exception_t handleInvocation(bool_t isCall, bool_t isBlocking, bool_t canDonate, bool_t firstPhase, cptr_t cptr)
 #else
 static exception_t handleInvocation(bool_t isCall, bool_t isBlocking)
@@ -562,7 +612,7 @@ exception_t handleSyscallShared(syscall_t syscall)
             break;
         }
         case SysNBSend: {
-            fail("shared-access SysNBSend not implemented");
+            handleNBSend();
             break;
         }
         case SysCall: {

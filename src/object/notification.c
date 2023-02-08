@@ -59,6 +59,76 @@ static inline void maybeDonateSchedContext(tcb_t *tcb, notification_t *ntfnPtr)
     }
 #endif
 
+void sendSignalShared(notification_t *ntfnPtr, word_t badge)
+{
+    ntfn_lock_acquire(ntfnPtr);
+    switch (notification_ptr_get_state(ntfnPtr)) {
+    case NtfnState_Idle: {
+        tcb_t *tcb = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr);
+        /* Check if we are bound and that thread is waiting for a message */
+        if (tcb) {
+
+        } else {
+            ntfn_set_active(ntfnPtr, badge);
+        }
+        break;
+    }
+    case NtfnState_Waiting: {
+        tcb_queue_t ntfn_queue;
+        tcb_t *dest;
+
+        ntfn_queue = ntfn_ptr_get_queue(ntfnPtr);
+        dest = ntfn_queue.head;
+
+        /* Haskell error "WaitingNtfn Notification must have non-empty queue" */
+        assert(dest);
+
+        /* Dequeue TCB */
+        ntfn_queue = tcbEPDequeue(dest, ntfn_queue);
+        ntfn_ptr_set_queue(ntfnPtr, ntfn_queue);
+
+        /* set the thread state to idle if the queue is empty */
+        if (!ntfn_queue.head) {
+            notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
+        }
+
+        setThreadState(dest, ThreadState_Running);
+        setRegister(dest, badgeRegister, badge);
+        scheduler_lock_acquire(dest->tcbAffinity);
+        MCS_DO_IF_SC(dest, ntfnPtr, {
+            possibleSwitchTo(dest);
+        })
+        scheduler_lock_release(dest->tcbAffinity);
+
+#ifdef CONFIG_KERNEL_MCS
+        if (sc_sporadic(dest->tcbSchedContext)) {
+            /* We know that the receiver can't have the current SC
+             * as its own SC as this point as it should still be
+             * associated with the current thread.
+             * This check is added here to reduce the cost of
+             * proving this to be true as a short-term stop-gap. */
+            assert(dest->tcbSchedContext != NODE_STATE(ksCurSC));
+            if (dest->tcbSchedContext != NODE_STATE(ksCurSC)) {
+                refill_unblock_check(dest->tcbSchedContext);
+            }
+        }
+#endif
+        break;
+    }
+
+    case NtfnState_Active: {
+        word_t badge2;
+
+        badge2 = notification_ptr_get_ntfnMsgIdentifier(ntfnPtr);
+        badge2 |= badge;
+
+        notification_ptr_set_ntfnMsgIdentifier(ntfnPtr, badge2);
+        break;
+    }
+    }
+    ntfn_lock_release(ntfnPtr);
+}
+
 void sendSignal(notification_t *ntfnPtr, word_t badge)
 {
     switch (notification_ptr_get_state(ntfnPtr)) {
