@@ -67,7 +67,43 @@ void sendSignalShared(notification_t *ntfnPtr, word_t badge)
         tcb_t *tcb = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr);
         /* Check if we are bound and that thread is waiting for a message */
         if (tcb) {
-
+            if (thread_state_ptr_get_tsType(&tcb->tcbState) == ThreadState_BlockedOnReceive) {
+                /* Send and start thread running */
+                bool_t removed_tcb = cancelIPCShared(tcb);
+                if (removed_tcb) {
+                    setThreadState(tcb, ThreadState_Running);
+                    setRegister(tcb, badgeRegister, badge);
+                    MCS_DO_IF_SC(tcb, ntfnPtr, {
+                        possibleSwitchTo(tcb);
+                    })
+                    if (sc_sporadic(tcb->tcbSchedContext)) {
+                        /* We know that the tcb can't have the current SC
+                         * as its own SC as this point as it should still be
+                         * associated with the current thread, or no thread.
+                         * This check is added here to reduce the cost of
+                         * proving this to be true as a short-term stop-gap. */
+                        assert(tcb->tcbSchedContext != NODE_STATE(ksCurSC));
+                        if (tcb->tcbSchedContext != NODE_STATE(ksCurSC)) {
+                            refill_unblock_check(tcb->tcbSchedContext);
+                        }
+                    }
+                } else {
+                    ntfn_set_active(ntfnPtr, badge);
+                }
+#ifdef CONFIG_VTX
+            } else if (thread_state_ptr_get_tsType(&tcb->tcbState) == ThreadState_RunningVM) {
+                fail("VTX not implemented");
+#endif
+            } else {
+                /* In particular, this path is taken when a thread
+                 * is waiting on a reply cap since BlockedOnReply
+                 * would also trigger this path. I.e, a thread
+                 * with a bound notification will not be awakened
+                 * by signals on that bound notification if it is
+                 * in the middle of an seL4_Call.
+                 */
+                ntfn_set_active(ntfnPtr, badge);
+            }
         } else {
             ntfn_set_active(ntfnPtr, badge);
         }
@@ -100,7 +136,6 @@ void sendSignalShared(notification_t *ntfnPtr, word_t badge)
         })
         scheduler_lock_release(dest->tcbAffinity);
 
-#ifdef CONFIG_KERNEL_MCS
         if (sc_sporadic(dest->tcbSchedContext)) {
             /* We know that the receiver can't have the current SC
              * as its own SC as this point as it should still be
@@ -112,7 +147,6 @@ void sendSignalShared(notification_t *ntfnPtr, word_t badge)
                 refill_unblock_check(dest->tcbSchedContext);
             }
         }
-#endif
         break;
     }
 

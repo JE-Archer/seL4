@@ -39,6 +39,7 @@ void sendIPC(bool_t blocking, bool_t do_call, word_t badge,
 void receiveIPC(tcb_t *thread, cap_t cap, bool_t isBlocking);
 #endif
 void cancelIPC(tcb_t *tptr);
+bool_t cancelIPCShared(tcb_t *tptr);
 void cancelAllIPC(endpoint_t *epptr);
 void cancelBadgedSends(endpoint_t *epptr, word_t badge);
 void replyFromKernel_error(tcb_t *thread);

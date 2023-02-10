@@ -303,6 +303,74 @@ void replyFromKernel_success_empty(tcb_t *thread)
                     seL4_MessageInfo_new(0, 0, 0, 0)));
 }
 
+bool_t cancelIPCShared(tcb_t *tptr)
+{
+    thread_state_t *state = &tptr->tcbState;
+
+    /* cancel ipc cancels all faults */
+    seL4_Fault_NullFault_ptr_new(&tptr->tcbFault);
+
+    switch (thread_state_ptr_get_tsType(state)) {
+    case ThreadState_BlockedOnSend:
+    case ThreadState_BlockedOnReceive: {
+        /* blockedIPCCancel state */
+        endpoint_t *epptr;
+        tcb_queue_t queue;
+
+        epptr = EP_PTR(thread_state_ptr_get_blockingObject(state));
+
+        ep_lock_acquire(epptr);
+
+        if (epptr != EP_PTR(thread_state_ptr_get_blockingObject(state))) {
+            ep_lock_release(epptr);
+            return false;
+        }
+
+        /* Haskell error "blockedIPCCancel: endpoint must not be idle" */
+        assert(endpoint_ptr_get_state(epptr) != EPState_Idle);
+
+        /* Dequeue TCB */
+        queue = ep_ptr_get_queue(epptr);
+        queue = tcbEPDequeue(tptr, queue);
+        ep_ptr_set_queue(epptr, queue);
+
+        if (!queue.head) {
+            endpoint_ptr_set_state(epptr, EPState_Idle);
+        }
+
+        ep_lock_release(epptr);
+
+        reply_t *reply = REPLY_PTR(thread_state_get_replyObject(tptr->tcbState));
+        if (reply != NULL) {
+            reply_object_lock_acquire(reply);
+            reply_unlink(reply, tptr);
+            reply_object_lock_release(reply);
+        }
+        setThreadState(tptr, ThreadState_Inactive);
+        break;
+    }
+
+    case ThreadState_BlockedOnNotification: {
+        notification_t *ntfnptr;
+        ntfnptr = NTFN_PTR(thread_state_ptr_get_blockingObject(state));
+        ntfn_lock_acquire(ntfnptr);
+        if (ntfnptr != NTFN_PTR(thread_state_ptr_get_blockingObject(state))) {
+            ntfn_lock_release(ntfnptr);
+            return false;
+        }
+        cancelSignal(tptr, NTFN_PTR(ntfnptr));
+        ntfn_lock_release(ntfnptr);
+        break;
+    }
+
+    case ThreadState_BlockedOnReply:
+        reply_remove_tcb(tptr);
+        break;
+    }
+
+    return true;
+}
+
 void cancelIPC(tcb_t *tptr)
 {
     thread_state_t *state = &tptr->tcbState;
