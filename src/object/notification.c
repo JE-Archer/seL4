@@ -462,7 +462,9 @@ void completeSignal(notification_t *ntfnPtr, tcb_t *tcb)
         setRegister(tcb, badgeRegister, badge);
         notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
 #ifdef CONFIG_KERNEL_MCS
+        scheduler_lock_acquire(getCurrentCPUIndex());
         maybeDonateSchedContext(tcb, ntfnPtr);
+        scheduler_lock_release(getCurrentCPUIndex());
         if (sc_sporadic(tcb->tcbSchedContext)) {
             sched_context_t *sc = SC_PTR(notification_ptr_get_ntfnSchedContext(ntfnPtr));
             if (tcb->tcbSchedContext == sc && tcb->tcbSchedContext != NODE_STATE(ksCurSC)) {

@@ -121,6 +121,145 @@ void sendIPC(bool_t blocking, bool_t do_call, word_t badge,
 }
 
 #ifdef CONFIG_KERNEL_MCS
+void receiveIPCShared(tcb_t *thread, cap_t cap, bool_t isBlocking, cap_t replyCap)
+{
+    endpoint_t *epptr;
+    notification_t *ntfnPtr;
+
+    /* Haskell error "receiveIPC: invalid cap" */
+    assert(cap_get_capType(cap) == cap_endpoint_cap);
+
+    epptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(cap));
+    ep_lock_acquire(epptr);
+
+    reply_t *replyPtr = NULL;
+    if (cap_get_capType(replyCap) == cap_reply_cap) {
+        replyPtr = REPLY_PTR(cap_reply_cap_get_capReplyPtr(replyCap));
+        reply_object_lock_acquire(replyPtr);
+        if (unlikely(replyPtr->replyTCB != NULL && replyPtr->replyTCB != thread)) {
+            userError("Reply object already has unexecuted reply!");
+            cancelIPC(replyPtr->replyTCB);
+        }
+    }
+
+    /* Check for anything waiting in the notification */
+    ntfnPtr = thread->tcbBoundNotification;
+    if (ntfnPtr && notification_ptr_get_state(ntfnPtr) == NtfnState_Active) {
+        ntfn_lock_acquire(ntfnPtr);
+        completeSignal(ntfnPtr, thread);
+        ntfn_lock_release(ntfnPtr);
+    } else {
+        /* If this is a blocking recv and we didn't have a pending notification,
+         * then if we are running on an SC from a bound notification, then we
+         * need to return it so that we can passively wait on the EP for potentially
+         * SC donations from client threads.
+         */
+        bool_t own_scheduler_lock = false;
+        if (ntfnPtr && isBlocking) {
+            scheduler_lock_acquire(getCurrentCPUIndex());
+            maybeReturnSchedContext(ntfnPtr, thread);
+            own_scheduler_lock = true;
+        }
+        switch (endpoint_ptr_get_state(epptr)) {
+        case EPState_Idle:
+        case EPState_Recv: {
+            tcb_queue_t queue;
+
+            if (isBlocking) {
+                /* Set thread state to BlockedOnReceive */
+                thread_state_ptr_set_tsType(&thread->tcbState,
+                                            ThreadState_BlockedOnReceive);
+                thread_state_ptr_set_blockingObject(
+                    &thread->tcbState, EP_REF(epptr));
+                thread_state_ptr_set_replyObject(&thread->tcbState, REPLY_REF(replyPtr));
+                if (replyPtr) {
+                    replyPtr->replyTCB = thread;
+                }
+                if (!own_scheduler_lock) {
+                    scheduler_lock_acquire(getCurrentCPUIndex());
+                }
+                scheduleTCB(thread);
+                scheduler_lock_release(getCurrentCPUIndex());
+
+                /* Place calling thread in endpoint queue */
+                queue = ep_ptr_get_queue(epptr);
+                queue = tcbEPAppend(thread, queue);
+                endpoint_ptr_set_state(epptr, EPState_Recv);
+                ep_ptr_set_queue(epptr, queue);
+            } else {
+                doNBRecvFailedTransfer(thread);
+            }
+            break;
+        }
+
+        case EPState_Send: {
+            tcb_queue_t queue;
+            tcb_t *sender;
+            word_t badge;
+            bool_t canGrant;
+            bool_t canGrantReply;
+            bool_t do_call;
+
+            if (!own_scheduler_lock) {
+                scheduler_lock_release(getCurrentCPUIndex());
+            }
+
+            /* Get the head of the endpoint queue. */
+            queue = ep_ptr_get_queue(epptr);
+            sender = queue.head;
+
+            /* Haskell error "Send endpoint queue must not be empty" */
+            assert(sender);
+
+            /* Dequeue the first TCB */
+            queue = tcbEPDequeue(sender, queue);
+            ep_ptr_set_queue(epptr, queue);
+
+            if (!queue.head) {
+                endpoint_ptr_set_state(epptr, EPState_Idle);
+            }
+
+            /* Get sender IPC details */
+            badge = thread_state_ptr_get_blockingIPCBadge(&sender->tcbState);
+            canGrant =
+                thread_state_ptr_get_blockingIPCCanGrant(&sender->tcbState);
+            canGrantReply =
+                thread_state_ptr_get_blockingIPCCanGrantReply(&sender->tcbState);
+
+            /* Do the transfer */
+            doIPCTransfer(sender, epptr, badge,
+                          canGrant, thread);
+
+            do_call = thread_state_ptr_get_blockingIPCIsCall(&sender->tcbState);
+
+            if (do_call ||
+                seL4_Fault_get_seL4_FaultType(sender->tcbFault) != seL4_Fault_NullFault) {
+                if ((canGrant || canGrantReply) && replyPtr != NULL) {
+                    bool_t canDonate = sender->tcbSchedContext != NULL
+                                       && seL4_Fault_get_seL4_FaultType(sender->tcbFault) != seL4_Fault_Timeout;
+                    reply_push(sender, thread, replyPtr, canDonate);
+                } else {
+                    setThreadState(sender, ThreadState_Inactive);
+                }
+            } else {
+                setThreadState(sender, ThreadState_Running);
+                scheduler_lock_acquire(sender->tcbAffinity);
+                possibleSwitchTo(sender);
+                scheduler_lock_release(sender->tcbAffinity);
+                assert(sender->tcbSchedContext == NULL || refill_sufficient(sender->tcbSchedContext, 0));
+            }
+            break;
+        }
+        }
+    }
+    if (replyPtr) {
+        reply_object_lock_release(replyPtr);
+    }
+    ep_lock_release(epptr);
+}
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 void receiveIPC(tcb_t *thread, cap_t cap, bool_t isBlocking, cap_t replyCap)
 #else
 void receiveIPC(tcb_t *thread, cap_t cap, bool_t isBlocking)

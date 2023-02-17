@@ -30,6 +30,7 @@ static inline void ep_ptr_set_queue(endpoint_t *epptr, tcb_queue_t queue)
 void sendIPC(bool_t blocking, bool_t do_call, word_t badge,
              bool_t canGrant, bool_t canGrantReply, bool_t canDonate, tcb_t *thread,
              endpoint_t *epptr);
+void receiveIPCShared(tcb_t *thread, cap_t cap, bool_t isBlocking, cap_t replyCap);
 void receiveIPC(tcb_t *thread, cap_t cap, bool_t isBlocking, cap_t replyCPtr);
 void reorderEP(endpoint_t *epptr, tcb_t *thread);
 #else

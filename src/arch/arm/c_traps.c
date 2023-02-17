@@ -131,11 +131,15 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
     NODE_STATE(ksSyscallNumber) = syscall;
 
 #ifdef CONFIG_KERNEL_MCS
-    int exclusive = !(syscall == SysNBWait || syscall == SysWait || syscall == SysNBSend);
+    bool_t shared = syscall == SysNBWait
+        || syscall == SysWait
+        || syscall == SysNBSend
+        || syscall == SysRecv
+        || syscall == SysNBRecv;
 #endif
 
 #ifdef CONFIG_KERNEL_MCS
-    if (exclusive) {
+    if (!shared) {
 #endif
         NODE_LOCK_SYS;
 #ifdef CONFIG_KERNEL_MCS
@@ -150,7 +154,7 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 #endif /* DEBUG */
 
 #ifdef CONFIG_KERNEL_MCS
-    if (exclusive) {
+    if (!shared) {
 #endif
         slowpath(syscall);
 #ifdef CONFIG_KERNEL_MCS

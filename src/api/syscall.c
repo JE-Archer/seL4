@@ -450,7 +450,7 @@ static void handleReply(void)
 #endif
 
 #ifdef CONFIG_KERNEL_MCS
-static void handleRecvCantReplyShared(bool_t isBlocking)
+static void handleRecvShared(bool_t isBlocking, bool_t canReply)
 {
     word_t epCPtr;
     lookupCap_ret_t lu_ret;
@@ -465,7 +465,22 @@ static void handleRecvCantReplyShared(bool_t isBlocking)
 
     switch (cap_get_capType(lu_ret.cap)) {
     case cap_endpoint_cap:
-        retry_syscall_exclusive();
+        if (unlikely(!cap_endpoint_cap_get_capCanReceive(lu_ret.cap))) {
+            retry_syscall_exclusive();
+            break;
+        }
+
+        cap_t ep_cap = lu_ret.cap;
+        cap_t reply_cap = cap_null_cap_new();
+        if (canReply) {
+            lu_ret = lookupReply();
+            if (lu_ret.status != EXCEPTION_NONE) {
+                return;
+            } else {
+                reply_cap = lu_ret.cap;
+            }
+        }
+        receiveIPCShared(NODE_STATE(ksCurThread), ep_cap, isBlocking, reply_cap);
         break;
 
     case cap_notification_cap: {
@@ -620,15 +635,15 @@ exception_t handleSyscallShared(syscall_t syscall)
             break;
         }
         case SysRecv: {
-            fail("shared-access SysRecv not implemented");
+            handleRecvShared(true, true);
             break;
         }
         case SysWait: {
-            handleRecvCantReplyShared(true);
+            handleRecvShared(true, false);
             break;
         }
         case SysNBWait: {
-            handleRecvCantReplyShared(false);
+            handleRecvShared(false, false);
             break;
         }
         case SysReplyRecv: {
@@ -644,7 +659,7 @@ exception_t handleSyscallShared(syscall_t syscall)
             break;
         }
         case SysNBRecv: {
-            fail("shared-access SysNBRecv not implemented");
+            handleRecvShared(false, true);
             break;
         }
         case SysYield: {
