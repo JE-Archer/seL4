@@ -174,6 +174,7 @@ void restart(tcb_t *target);
 void doIPCTransfer(tcb_t *sender, endpoint_t *endpoint,
                    word_t badge, bool_t grant, tcb_t *receiver);
 #ifdef CONFIG_KERNEL_MCS
+void doReplyTransferShared(tcb_t *sender, reply_t *reply);
 void doReplyTransfer(tcb_t *sender, reply_t *reply, bool_t grant);
 #else
 void doReplyTransfer(tcb_t *sender, tcb_t *receiver, cte_t *slot, bool_t grant);

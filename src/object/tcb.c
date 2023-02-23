@@ -379,8 +379,6 @@ void deleteCallerCap(tcb_t *receiver)
 }
 #endif
 
-extra_caps_t current_extra_caps;
-
 exception_t lookupExtraCaps(tcb_t *thread, word_t *bufferPtr, seL4_MessageInfo_t info)
 {
     lookupSlot_raw_ret_t lu_ret;
@@ -388,7 +386,7 @@ exception_t lookupExtraCaps(tcb_t *thread, word_t *bufferPtr, seL4_MessageInfo_t
     word_t i, length;
 
     if (!bufferPtr) {
-        current_extra_caps.excaprefs[0] = NULL;
+        NODE_STATE(ksCurrentExtraCaps).excaprefs[0] = NULL;
         return EXCEPTION_NONE;
     }
 
@@ -403,10 +401,10 @@ exception_t lookupExtraCaps(tcb_t *thread, word_t *bufferPtr, seL4_MessageInfo_t
             return lu_ret.status;
         }
 
-        current_extra_caps.excaprefs[i] = lu_ret.slot;
+        NODE_STATE(ksCurrentExtraCaps).excaprefs[i] = lu_ret.slot;
     }
     if (i < seL4_MsgMaxExtraCaps) {
-        current_extra_caps.excaprefs[i] = NULL;
+        NODE_STATE(ksCurrentExtraCaps).excaprefs[i] = NULL;
     }
 
     return EXCEPTION_NONE;
@@ -904,7 +902,7 @@ exception_t decodeCopyRegisters(cap_t cap, word_t length, word_t *buffer)
     cap_t source_cap;
     word_t flags;
 
-    if (length < 1 || current_extra_caps.excaprefs[0] == NULL) {
+    if (length < 1 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("TCB CopyRegisters: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -914,7 +912,7 @@ exception_t decodeCopyRegisters(cap_t cap, word_t length, word_t *buffer)
 
     transferArch = Arch_decodeTransfer(flags >> 8);
 
-    source_cap = current_extra_caps.excaprefs[0]->cap;
+    source_cap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     if (cap_get_capType(source_cap) == cap_thread_cap) {
         srcTCB = TCB_PTR(cap_thread_cap_get_capTCBPtr(source_cap));
@@ -1057,9 +1055,9 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
 #else
 #define TCBCONFIGURE_ARGS 4
 #endif
-    if (length < TCBCONFIGURE_ARGS || current_extra_caps.excaprefs[0] == NULL
-        || current_extra_caps.excaprefs[1] == NULL
-        || current_extra_caps.excaprefs[2] == NULL) {
+    if (length < TCBCONFIGURE_ARGS || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL
+        || NODE_STATE(ksCurrentExtraCaps).excaprefs[1] == NULL
+        || NODE_STATE(ksCurrentExtraCaps).excaprefs[2] == NULL) {
         userError("TCB Configure: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -1076,12 +1074,12 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
     bufferAddr    = getSyscallArg(3, buffer);
 #endif
 
-    cRootSlot  = current_extra_caps.excaprefs[0];
-    cRootCap   = current_extra_caps.excaprefs[0]->cap;
-    vRootSlot  = current_extra_caps.excaprefs[1];
-    vRootCap   = current_extra_caps.excaprefs[1]->cap;
-    bufferSlot = current_extra_caps.excaprefs[2];
-    bufferCap  = current_extra_caps.excaprefs[2]->cap;
+    cRootSlot  = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
+    cRootCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
+    vRootSlot  = NODE_STATE(ksCurrentExtraCaps).excaprefs[1];
+    vRootCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[1]->cap;
+    bufferSlot = NODE_STATE(ksCurrentExtraCaps).excaprefs[2];
+    bufferCap  = NODE_STATE(ksCurrentExtraCaps).excaprefs[2]->cap;
 
     if (bufferAddr == 0) {
         bufferSlot = NULL;
@@ -1164,14 +1162,14 @@ exception_t decodeTCBConfigure(cap_t cap, word_t length, cte_t *slot, word_t *bu
 
 exception_t decodeSetPriority(cap_t cap, word_t length, word_t *buffer)
 {
-    if (length < 1 || current_extra_caps.excaprefs[0] == NULL) {
+    if (length < 1 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("TCB SetPriority: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     prio_t newPrio = getSyscallArg(0, buffer);
-    cap_t authCap = current_extra_caps.excaprefs[0]->cap;
+    cap_t authCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     if (cap_get_capType(authCap) != cap_thread_cap) {
         userError("Set priority: authority cap not a TCB.");
@@ -1208,14 +1206,14 @@ exception_t decodeSetPriority(cap_t cap, word_t length, word_t *buffer)
 
 exception_t decodeSetMCPriority(cap_t cap, word_t length, word_t *buffer)
 {
-    if (length < 1 || current_extra_caps.excaprefs[0] == NULL) {
+    if (length < 1 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("TCB SetMCPriority: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     prio_t newMcp = getSyscallArg(0, buffer);
-    cap_t authCap = current_extra_caps.excaprefs[0]->cap;
+    cap_t authCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     if (cap_get_capType(authCap) != cap_thread_cap) {
         userError("TCB SetMCPriority: authority cap not a TCB.");
@@ -1253,13 +1251,13 @@ exception_t decodeSetMCPriority(cap_t cap, word_t length, word_t *buffer)
 #ifdef CONFIG_KERNEL_MCS
 exception_t decodeSetTimeoutEndpoint(cap_t cap, cte_t *slot)
 {
-    if (current_extra_caps.excaprefs[0] == NULL) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("TCB SetSchedParams: Truncated message.");
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    cte_t *thSlot = current_extra_caps.excaprefs[0];
-    cap_t thCap   = current_extra_caps.excaprefs[0]->cap;
+    cte_t *thSlot = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
+    cap_t thCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     /* timeout handler */
     if (!validFaultHandler(thCap)) {
@@ -1286,9 +1284,9 @@ exception_t decodeSetSchedParams(cap_t cap, word_t length, cte_t *slot, word_t *
 exception_t decodeSetSchedParams(cap_t cap, word_t length, word_t *buffer)
 #endif
 {
-    if (length < 2 || current_extra_caps.excaprefs[0] == NULL
+    if (length < 2 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL
 #ifdef CONFIG_KERNEL_MCS
-        || current_extra_caps.excaprefs[1] == NULL || current_extra_caps.excaprefs[2] == NULL
+        || NODE_STATE(ksCurrentExtraCaps).excaprefs[1] == NULL || NODE_STATE(ksCurrentExtraCaps).excaprefs[2] == NULL
 #endif
        ) {
         userError("TCB SetSchedParams: Truncated message.");
@@ -1298,11 +1296,11 @@ exception_t decodeSetSchedParams(cap_t cap, word_t length, word_t *buffer)
 
     prio_t newMcp = getSyscallArg(0, buffer);
     prio_t newPrio = getSyscallArg(1, buffer);
-    cap_t authCap = current_extra_caps.excaprefs[0]->cap;
+    cap_t authCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 #ifdef CONFIG_KERNEL_MCS
-    cap_t scCap   = current_extra_caps.excaprefs[1]->cap;
-    cte_t *fhSlot = current_extra_caps.excaprefs[2];
-    cap_t fhCap   = current_extra_caps.excaprefs[2]->cap;
+    cap_t scCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[1]->cap;
+    cte_t *fhSlot = NODE_STATE(ksCurrentExtraCaps).excaprefs[2];
+    cap_t fhCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[2]->cap;
 #endif
 
     if (cap_get_capType(authCap) != cap_thread_cap) {
@@ -1400,15 +1398,15 @@ exception_t decodeSetIPCBuffer(cap_t cap, word_t length, cte_t *slot, word_t *bu
     cap_t bufferCap;
     cte_t *bufferSlot;
 
-    if (length < 1 || current_extra_caps.excaprefs[0] == NULL) {
+    if (length < 1 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("TCB SetIPCBuffer: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
     cptr_bufferPtr  = getSyscallArg(0, buffer);
-    bufferSlot = current_extra_caps.excaprefs[0];
-    bufferCap  = current_extra_caps.excaprefs[0]->cap;
+    bufferSlot = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
+    bufferCap  = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     if (cptr_bufferPtr == 0) {
         bufferSlot = NULL;
@@ -1461,10 +1459,10 @@ exception_t decodeSetSpace(cap_t cap, word_t length, cte_t *slot, word_t *buffer
     cap_t cRootCap, vRootCap;
     deriveCap_ret_t dc_ret;
 
-    if (length < DECODE_SET_SPACE_PARAMS || current_extra_caps.excaprefs[0] == NULL
-        || current_extra_caps.excaprefs[1] == NULL
+    if (length < DECODE_SET_SPACE_PARAMS || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL
+        || NODE_STATE(ksCurrentExtraCaps).excaprefs[1] == NULL
 #ifdef CONFIG_KERNEL_MCS
-        || current_extra_caps.excaprefs[2] == NULL
+        || NODE_STATE(ksCurrentExtraCaps).excaprefs[2] == NULL
 #endif
        ) {
         userError("TCB SetSpace: Truncated message.");
@@ -1476,21 +1474,21 @@ exception_t decodeSetSpace(cap_t cap, word_t length, cte_t *slot, word_t *buffer
     cRootData = getSyscallArg(0, buffer);
     vRootData = getSyscallArg(1, buffer);
 
-    cte_t *fhSlot     = current_extra_caps.excaprefs[0];
-    cap_t fhCap      = current_extra_caps.excaprefs[0]->cap;
-    cRootSlot  = current_extra_caps.excaprefs[1];
-    cRootCap   = current_extra_caps.excaprefs[1]->cap;
-    vRootSlot  = current_extra_caps.excaprefs[2];
-    vRootCap   = current_extra_caps.excaprefs[2]->cap;
+    cte_t *fhSlot     = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
+    cap_t fhCap      = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
+    cRootSlot  = NODE_STATE(ksCurrentExtraCaps).excaprefs[1];
+    cRootCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[1]->cap;
+    vRootSlot  = NODE_STATE(ksCurrentExtraCaps).excaprefs[2];
+    vRootCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[2]->cap;
 #else
     cptr_t faultEP   = getSyscallArg(0, buffer);
     cRootData = getSyscallArg(1, buffer);
     vRootData = getSyscallArg(2, buffer);
 
-    cRootSlot  = current_extra_caps.excaprefs[0];
-    cRootCap   = current_extra_caps.excaprefs[0]->cap;
-    vRootSlot  = current_extra_caps.excaprefs[1];
-    vRootCap   = current_extra_caps.excaprefs[1]->cap;
+    cRootSlot  = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
+    cRootCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
+    vRootSlot  = NODE_STATE(ksCurrentExtraCaps).excaprefs[1];
+    vRootCap   = NODE_STATE(ksCurrentExtraCaps).excaprefs[1]->cap;
 #endif
 
     if (slotCapLongRunningDelete(
@@ -1588,13 +1586,13 @@ exception_t decodeDomainInvocation(word_t invLabel, word_t length, word_t *buffe
         }
     }
 
-    if (unlikely(current_extra_caps.excaprefs[0] == NULL)) {
+    if (unlikely(NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL)) {
         userError("Domain Configure: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    tcap = current_extra_caps.excaprefs[0]->cap;
+    tcap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
     if (unlikely(cap_get_capType(tcap) != cap_thread_cap)) {
         userError("Domain Configure: thread cap required.");
         current_syscall_error.type = seL4_InvalidArgument;
@@ -1613,7 +1611,7 @@ exception_t decodeBindNotification(cap_t cap)
     tcb_t *tcb;
     cap_t ntfn_cap;
 
-    if (current_extra_caps.excaprefs[0] == NULL) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("TCB BindNotification: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -1627,7 +1625,7 @@ exception_t decodeBindNotification(cap_t cap)
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    ntfn_cap = current_extra_caps.excaprefs[0]->cap;
+    ntfn_cap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     if (cap_get_capType(ntfn_cap) == cap_notification_cap) {
         ntfnPtr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(ntfn_cap));

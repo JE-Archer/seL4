@@ -257,6 +257,58 @@ exception_t handleVMFaultEvent(vm_fault_type_t vm_faultType)
 }
 
 #ifdef CONFIG_KERNEL_MCS
+struct lbo_ret {
+    bool_t success;
+    endpoint_t *blocking_ep;
+    reply_t *reply;
+};
+typedef struct lbo_ret lbo_ret_t;
+
+lbo_ret_t lock_blocking_objects(tcb_t *tcb)
+{
+    assert(tcb);
+
+    thread_state_t *state = &tcb->tcbState;
+    if (thread_state_ptr_get_tsType(state) != ThreadState_BlockedOnReceive) {
+        return (lbo_ret_t){ .success = true, 0 };
+    }
+
+    endpoint_t *blocking_ep = EP_PTR(thread_state_ptr_get_blockingObject(state));
+    if (!blocking_ep) {
+        return (lbo_ret_t){ .success = true, 0 };
+    }
+    ep_lock_acquire(blocking_ep);
+
+    state = &tcb->tcbState;
+    if (EP_PTR(thread_state_ptr_get_blockingObject(state)) != blocking_ep) {
+        ep_lock_release(blocking_ep);
+        return (lbo_ret_t){ .success = false, 0 };
+    }
+
+    reply_t *reply = REPLY_PTR(thread_state_get_replyObject(*state));
+    if (reply) {
+        reply_object_lock_acquire(reply);
+    }
+
+    return (lbo_ret_t){
+        .success = true,
+        .blocking_ep = blocking_ep,
+        .reply = reply,
+    };
+}
+
+void unlock_blocking_objects(lbo_ret_t bo)
+{
+    if (bo.reply) {
+        reply_object_lock_release(bo.reply);
+    }
+    if (bo.blocking_ep) {
+        ep_lock_release(bo.blocking_ep);
+    }
+}
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 static exception_t handleNBSend(void)
 {
     lookupCap_ret_t lu_ret;
@@ -268,37 +320,47 @@ static exception_t handleNBSend(void)
 
     /* faulting section */
     lu_ret = lookupCap(NODE_STATE(ksCurThread), cptr);
-
     if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
-        userError("Invocation of invalid cap #%lu.", cptr);
-        current_fault = seL4_Fault_CapFault_new(cptr, false);
-
-        return EXCEPTION_NONE;
+        retry_syscall_exclusive();
     }
 
     if (cap_get_capType(lu_ret.cap) == cap_notification_cap) {
         if (unlikely(!cap_notification_cap_get_capNtfnCanSend(lu_ret.cap))) {
-            userError("Attempted to invoke a read-only notification cap #%lu.",
-                      cptr);
-            current_syscall_error.type = seL4_InvalidCapability;
-            current_syscall_error.invalidCapNumber = 0;
-            return EXCEPTION_SYSCALL_ERROR;
-        }
-
-        if (notification_ptr_get_ntfnBoundTCB(NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap)))) {
             retry_syscall_exclusive();
         }
 
+        notification_t *ntfnptr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap));
+        ntfn_lock_acquire(ntfnptr);
+
+        word_t badge = cap_notification_cap_get_capNtfnBadge(lu_ret.cap);
+
         setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
-        sendSignalShared(
-                   NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap)),
-                   cap_notification_cap_get_capNtfnBadge(lu_ret.cap));
+
+        tcb_t *bound_tcb = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnptr);
+        bool_t bound_ntfn_idle = notification_ptr_get_state(ntfnptr) == NtfnState_Idle;
+        if (bound_tcb && bound_ntfn_idle) {
+            lbo_ret_t lbo_ret = {0};
+//            ntfn_lock_release(ntfnptr);
+//            retry_syscall_exclusive();
+            while (!lbo_ret.success) {
+                lbo_ret = lock_blocking_objects(bound_tcb);
+            }
+            if (lbo_ret.blocking_ep) {
+                sendSignalBlockedBoundTCB(ntfnptr, bound_tcb, badge);
+            } else {
+                sendSignalShared(ntfnptr, badge);
+            }
+            unlock_blocking_objects(lbo_ret);
+        } else {
+            sendSignalShared(ntfnptr, badge);
+        }
+
+        ntfn_lock_release(ntfnptr);
     } else {
         retry_syscall_exclusive();
     }
 
-    if (unlikely(
-            thread_state_get_tsType(thread->tcbState) == ThreadState_Restart)) {
+    if (unlikely(thread_state_get_tsType(thread->tcbState) == ThreadState_Restart)) {
         setThreadState(thread, ThreadState_Running);
     }
 
@@ -412,6 +474,58 @@ static inline lookupCap_ret_t lookupReply(void)
 
     return lu_ret;
 }
+
+static inline lookupCap_ret_t lookupReplyShared(void)
+{
+    word_t replyCPtr = getRegister(NODE_STATE(ksCurThread), replyRegister);
+    lookupCap_ret_t lu_ret = lookupCap(NODE_STATE(ksCurThread), replyCPtr);
+    if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+        return lu_ret;
+    }
+
+    if (unlikely(cap_get_capType(lu_ret.cap) != cap_reply_cap)) {
+        lu_ret.status = EXCEPTION_FAULT;
+    }
+
+    return lu_ret;
+}
+
+static void handleReply(bool_t canDonate, bool_t canGrant)
+{
+    seL4_MessageInfo_t info;
+    word_t *buffer;
+    word_t length;
+    tcb_t *thread;
+    lookupCap_ret_t lu_ret;
+    reply_t *replyptr;
+
+    thread = NODE_STATE(ksCurThread);
+    buffer = lookupIPCBuffer(false, thread);
+    info = messageInfoFromWord(getRegister(thread, msgInfoRegister));
+
+    if (seL4_MessageInfo_get_extraCaps(info) != 0) {
+        retry_syscall_exclusive();
+    }
+
+    length = seL4_MessageInfo_get_length(info);
+    if (unlikely(length > n_msgRegisters && !buffer)) {
+        length = n_msgRegisters;
+    }
+
+    lu_ret = lookupReplyShared();
+    if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
+        retry_syscall_exclusive();
+    }
+    replyptr = REPLY_PTR(cap_reply_cap_get_capReplyPtr(lu_ret.cap));
+
+    reply_object_lock_acquire(replyptr);
+
+    setThreadState(thread, ThreadState_Restart);
+    doReplyTransferShared(thread, replyptr);
+
+    reply_object_lock_release(replyptr);
+}
+
 #else
 static void handleReply(void)
 {
@@ -452,49 +566,115 @@ static void handleReply(void)
 #ifdef CONFIG_KERNEL_MCS
 static void handleRecvShared(bool_t isBlocking, bool_t canReply)
 {
-    word_t epCPtr;
+    word_t cptr;
     lookupCap_ret_t lu_ret;
 
-    epCPtr = getRegister(NODE_STATE(ksCurThread), capRegister);
-
-    lu_ret = lookupCap(NODE_STATE(ksCurThread), epCPtr);
-
+    cptr = getRegister(NODE_STATE(ksCurThread), capRegister);
+    lu_ret = lookupCap(NODE_STATE(ksCurThread), cptr);
     if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
         retry_syscall_exclusive();
     }
 
     switch (cap_get_capType(lu_ret.cap)) {
-    case cap_endpoint_cap:
+    case cap_endpoint_cap: {
         if (unlikely(!cap_endpoint_cap_get_capCanReceive(lu_ret.cap))) {
             retry_syscall_exclusive();
             break;
         }
 
-        cap_t ep_cap = lu_ret.cap;
         cap_t reply_cap = cap_null_cap_new();
+        reply_t *replyptr = NULL;
         if (canReply) {
-            lu_ret = lookupReply();
-            if (lu_ret.status != EXCEPTION_NONE) {
+            lookupCap_ret_t lu_ret = lookupReplyShared();
+            if (unlikely(lu_ret.status != EXCEPTION_NONE)) {
                 return;
+            }
+            replyptr = REPLY_PTR(cap_reply_cap_get_capReplyPtr(lu_ret.cap));
+        }
+
+        notification_t *bound_ntfn = NODE_STATE(ksCurThread)->tcbBoundNotification;
+//        if (bound_ntfn) {
+//            retry_syscall_exclusive();
+//            break;
+//        }
+        if (bound_ntfn && notification_ptr_get_state(bound_ntfn) == NtfnState_Active) {
+            ntfn_lock_acquire(bound_ntfn);
+            if (notification_ptr_get_state(bound_ntfn) == NtfnState_Active) {
+                completeSignal(bound_ntfn, NODE_STATE(ksCurThread));
+                ntfn_lock_release(bound_ntfn);
+                break;
             } else {
-                reply_cap = lu_ret.cap;
+                ntfn_lock_release(bound_ntfn);
             }
         }
-        receiveIPCShared(NODE_STATE(ksCurThread), ep_cap, isBlocking, reply_cap);
-        break;
 
-    case cap_notification_cap: {
-        notification_t *ntfnPtr;
-        tcb_t *boundTCB;
-        ntfnPtr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap));
-        boundTCB = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfnPtr);
-        if (unlikely(!cap_notification_cap_get_capNtfnCanReceive(lu_ret.cap)
-                     || (boundTCB && boundTCB != NODE_STATE(ksCurThread)))) {
+        bool_t receiver_has_cap_slot = false;
+        bool_t sender_is_transferring_cap = false;
+
+        word_t *receiver_buffer = lookupIPCBuffer(true, NODE_STATE(ksCurThread));
+        receiver_has_cap_slot = getReceiveSlots(NODE_STATE(ksCurThread), receiver_buffer) != NULL;
+
+        cap_t ep_cap = lu_ret.cap;
+        endpoint_t *epptr = EP_PTR(cap_endpoint_cap_get_capEPPtr(ep_cap));
+
+        ep_lock_acquire(epptr);
+
+        switch (endpoint_ptr_get_state(epptr)) {
+        case EPState_Send:
+            break;
+        case EPState_Recv:
+            break;
+        case EPState_Idle:
+            break;
+        default:
+            ep_lock_release(epptr);
             retry_syscall_exclusive();
             break;
         }
 
-        receiveSignalShared(NODE_STATE(ksCurThread), lu_ret.cap, isBlocking);
+        if (endpoint_ptr_get_state(epptr) == EPState_Send) {
+            tcb_queue_t queue;
+            tcb_t *sender;
+            queue = ep_ptr_get_queue(epptr);
+            sender = queue.head;
+            seL4_MessageInfo_t info = messageInfoFromWord(getRegister(sender, msgInfoRegister));
+            sender_is_transferring_cap = (seL4_MessageInfo_get_extraCaps(info) != 0);
+        }
+
+        if (receiver_has_cap_slot && sender_is_transferring_cap) {
+            ep_lock_release(epptr);
+            retry_syscall_exclusive();
+            break;
+        }
+
+        if (replyptr) {
+            reply_object_lock_acquire(replyptr);
+        }
+
+        receiveIPCShared(NODE_STATE(ksCurThread), epptr, isBlocking, replyptr);
+
+        if (replyptr) {
+            reply_object_lock_release(replyptr);
+        }
+        ep_lock_release(epptr);
+
+        break;
+    }
+    case cap_notification_cap: {
+        notification_t *ntfn_ptr;
+        tcb_t *bound_tcb;
+        ntfn_ptr = NTFN_PTR(cap_notification_cap_get_capNtfnPtr(lu_ret.cap));
+        bound_tcb = (tcb_t *)notification_ptr_get_ntfnBoundTCB(ntfn_ptr);
+        if (unlikely(!cap_notification_cap_get_capNtfnCanReceive(lu_ret.cap)
+                     || (bound_tcb && bound_tcb != NODE_STATE(ksCurThread)))) {
+            retry_syscall_exclusive();
+            break;
+        }
+
+        ntfn_lock_acquire(ntfn_ptr);
+        receiveSignalShared(NODE_STATE(ksCurThread), ntfn_ptr, isBlocking);
+        ntfn_lock_release(ntfn_ptr);
+
         break;
     }
     default:
@@ -647,7 +827,9 @@ exception_t handleSyscallShared(syscall_t syscall)
             break;
         }
         case SysReplyRecv: {
-            fail("shared-access SysReplyRecv not implemented");
+            cptr_t reply = getRegister(NODE_STATE(ksCurThread), replyRegister);
+            handleReply(true, reply);
+            handleRecv(true, true);
             break;
         }
         case SysNBSendRecv: {

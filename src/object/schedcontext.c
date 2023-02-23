@@ -28,13 +28,13 @@ static exception_t invokeSchedContext_UnbindObject(sched_context_t *sc, cap_t ca
 
 static exception_t decodeSchedContext_UnbindObject(sched_context_t *sc)
 {
-    if (current_extra_caps.excaprefs[0] == NULL) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("SchedContext_Unbind: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    cap_t cap = current_extra_caps.excaprefs[0]->cap;
+    cap_t cap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
     switch (cap_get_capType(cap)) {
     case cap_thread_cap:
         if (sc->scTcb != TCB_PTR(cap_thread_cap_get_capTCBPtr(cap))) {
@@ -86,13 +86,13 @@ static exception_t invokeSchedContext_Bind(sched_context_t *sc, cap_t cap)
 
 static exception_t decodeSchedContext_Bind(sched_context_t *sc)
 {
-    if (current_extra_caps.excaprefs[0] == NULL) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("SchedContext_Bind: Truncated Message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    cap_t cap = current_extra_caps.excaprefs[0]->cap;
+    cap_t cap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     switch (cap_get_capType(cap)) {
     case cap_thread_cap:

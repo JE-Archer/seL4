@@ -125,6 +125,54 @@ void doIPCTransfer(tcb_t *sender, endpoint_t *endpoint, word_t badge,
 }
 
 #ifdef CONFIG_KERNEL_MCS
+void doReplyTransferShared(tcb_t *sender, reply_t *reply)
+{
+    if (reply->replyTCB == NULL ||
+        thread_state_get_tsType(reply->replyTCB->tcbState) != ThreadState_BlockedOnReply) {
+        /* nothing to do */
+        return;
+    }
+
+    tcb_t *receiver = reply->replyTCB;
+    reply_remove(reply, receiver);
+    assert(thread_state_get_replyObject(receiver->tcbState) == REPLY_REF(0));
+    assert(reply->replyTCB == NULL);
+
+    if (sc_sporadic(receiver->tcbSchedContext)
+        && receiver->tcbSchedContext != NODE_STATE_ON_CORE(ksCurSC, receiver->tcbSchedContext->scCore)) {
+        refill_unblock_check(receiver->tcbSchedContext);
+    }
+
+    word_t fault_type = seL4_Fault_get_seL4_FaultType(receiver->tcbFault);
+    if (likely(fault_type == seL4_Fault_NullFault)) {
+        doIPCTransfer(sender, NULL, 0, false, receiver);
+        setThreadState(receiver, ThreadState_Running);
+    } else {
+        bool_t restart = handleFaultReply(receiver, sender);
+        receiver->tcbFault = seL4_Fault_NullFault_new();
+        if (restart) {
+            setThreadState(receiver, ThreadState_Restart);
+        } else {
+            setThreadState(receiver, ThreadState_Inactive);
+        }
+    }
+
+    if (receiver->tcbSchedContext && isRunnable(receiver)) {
+        if ((refill_ready(receiver->tcbSchedContext) && refill_sufficient(receiver->tcbSchedContext, 0))) {
+            possibleSwitchTo(receiver);
+        } else {
+            if (validTimeoutHandler(receiver) && fault_type != seL4_Fault_Timeout) {
+                current_fault = seL4_Fault_Timeout_new(receiver->tcbSchedContext->scBadge);
+                handleTimeout(receiver);
+            } else {
+                postpone(receiver->tcbSchedContext);
+            }
+        }
+    }
+}
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 void doReplyTransfer(tcb_t *sender, reply_t *reply, bool_t grant)
 #else
 void doReplyTransfer(tcb_t *sender, tcb_t *receiver, cte_t *slot, bool_t grant)
@@ -208,10 +256,10 @@ void doNormalTransfer(tcb_t *sender, word_t *sendBuffer, endpoint_t *endpoint,
     if (canGrant) {
         status = lookupExtraCaps(sender, sendBuffer, tag);
         if (unlikely(status != EXCEPTION_NONE)) {
-            current_extra_caps.excaprefs[0] = NULL;
+            NODE_STATE(ksCurrentExtraCaps).excaprefs[0] = NULL;
         }
     } else {
-        current_extra_caps.excaprefs[0] = NULL;
+        NODE_STATE(ksCurrentExtraCaps).excaprefs[0] = NULL;
     }
 
     msgTransferred = copyMRs(sender, sendBuffer, receiver, receiveBuffer,
@@ -248,14 +296,14 @@ static seL4_MessageInfo_t transferCaps(seL4_MessageInfo_t info,
     info = seL4_MessageInfo_set_extraCaps(info, 0);
     info = seL4_MessageInfo_set_capsUnwrapped(info, 0);
 
-    if (likely(!current_extra_caps.excaprefs[0] || !receiveBuffer)) {
+    if (likely(!NODE_STATE(ksCurrentExtraCaps).excaprefs[0] || !receiveBuffer)) {
         return info;
     }
 
     destSlot = getReceiveSlots(receiver, receiveBuffer);
 
-    for (i = 0; i < seL4_MsgMaxExtraCaps && current_extra_caps.excaprefs[i] != NULL; i++) {
-        cte_t *slot = current_extra_caps.excaprefs[i];
+    for (i = 0; i < seL4_MsgMaxExtraCaps && NODE_STATE(ksCurrentExtraCaps).excaprefs[i] != NULL; i++) {
+        cte_t *slot = NODE_STATE(ksCurrentExtraCaps).excaprefs[i];
         cap_t cap = slot->cap;
 
         if (cap_get_capType(cap) == cap_endpoint_cap &&

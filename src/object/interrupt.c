@@ -31,7 +31,7 @@ exception_t decodeIRQControlInvocation(word_t invLabel, word_t length,
         lookupSlot_ret_t lu_ret;
         exception_t status;
 
-        if (length < 3 || current_extra_caps.excaprefs[0] == NULL) {
+        if (length < 3 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
@@ -40,7 +40,7 @@ exception_t decodeIRQControlInvocation(word_t invLabel, word_t length,
         index = getSyscallArg(1, buffer);
         depth = getSyscallArg(2, buffer);
 
-        cnodeCap = current_extra_caps.excaprefs[0]->cap;
+        cnodeCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
         status = Arch_checkIRQ(irq_w);
         if (status != EXCEPTION_NONE) {
@@ -95,12 +95,12 @@ exception_t decodeIRQHandlerInvocation(word_t invLabel, irq_t irq)
         cap_t ntfnCap;
         cte_t *slot;
 
-        if (current_extra_caps.excaprefs[0] == NULL) {
+        if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
             current_syscall_error.type = seL4_TruncatedMessage;
             return EXCEPTION_SYSCALL_ERROR;
         }
-        ntfnCap = current_extra_caps.excaprefs[0]->cap;
-        slot = current_extra_caps.excaprefs[0];
+        ntfnCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
+        slot = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
 
         if (cap_get_capType(ntfnCap) != cap_notification_cap ||
             !cap_notification_cap_get_capNtfnCanSend(ntfnCap)) {

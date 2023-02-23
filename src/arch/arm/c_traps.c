@@ -126,17 +126,32 @@ void NORETURN slowpath(syscall_t syscall)
     UNREACHABLE();
 }
 
+#ifdef CONFIG_KERNEL_MCS
+bool_t lock_shared_heuristic(word_t cptr, word_t msgInfo, syscall_t syscall)
+{
+    bool_t compatible_syscall = false;
+//    if (syscall == SysNBWait) compatible_syscall = true;
+//    if (syscall == SysWait) compatible_syscall = true;
+//    if (syscall == SysRecv) compatible_syscall = true;
+//    if (syscall == SysNBRecv) compatible_syscall = true;
+//    if (syscall == SysNBSend) compatible_syscall = true;
+    if (!compatible_syscall) {
+        return false;
+    }
+
+    if (msgInfo & seL4_MsgExtraCapBits) {
+        return false;
+    }
+
+    return true;
+}
+#endif
+
 void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
     NODE_STATE(ksSyscallNumber) = syscall;
 
-#ifdef CONFIG_KERNEL_MCS
-    bool_t shared = syscall == SysNBWait
-        || syscall == SysWait
-        || syscall == SysNBSend
-        || syscall == SysRecv
-        || syscall == SysNBRecv;
-#endif
+    bool_t shared = lock_shared_heuristic(cptr, msgInfo, syscall);
 
 #ifdef CONFIG_KERNEL_MCS
     if (!shared) {

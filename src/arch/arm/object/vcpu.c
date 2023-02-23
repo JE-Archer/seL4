@@ -536,12 +536,12 @@ exception_t invokeVCPUAckVPPI(vcpu_t *vcpu, VPPIEventIRQ_t vppi)
 exception_t decodeVCPUSetTCB(cap_t cap)
 {
     cap_t tcbCap;
-    if (current_extra_caps.excaprefs[0] == NULL) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("VCPU SetTCB: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
     }
-    tcbCap  = current_extra_caps.excaprefs[0]->cap;
+    tcbCap  = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
 
     if (cap_get_capType(tcbCap) != cap_thread_cap) {
         userError("TCB cap is not a TCB cap.");

@@ -48,7 +48,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     }
 
     /* Ensure message length valid. */
-    if (length < 6 || current_extra_caps.excaprefs[0] == NULL) {
+    if (length < 6 || NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("Untyped invocation: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -62,7 +62,7 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
     nodeOffset  = getSyscallArg(4, buffer);
     nodeWindow  = getSyscallArg(5, buffer);
 
-    rootSlot = current_extra_caps.excaprefs[0];
+    rootSlot = NODE_STATE(ksCurrentExtraCaps).excaprefs[0];
 
     /* Is the requested object type valid? */
     if (newType >= seL4_ObjectTypeCount) {
@@ -112,9 +112,9 @@ exception_t decodeUntypedInvocation(word_t invLabel, word_t length, cte_t *slot,
 
     /* Lookup the destination CNode (where our caps will be placed in). */
     if (nodeDepth == 0) {
-        nodeCap = current_extra_caps.excaprefs[0]->cap;
+        nodeCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
     } else {
-        cap_t rootCap = current_extra_caps.excaprefs[0]->cap;
+        cap_t rootCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
         lu_ret = lookupTargetSlot(rootCap, nodeIndex, nodeDepth);
         if (lu_ret.status != EXCEPTION_NONE) {
             userError("Untyped Retype: Invalid destination address.");

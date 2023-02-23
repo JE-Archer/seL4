@@ -78,7 +78,7 @@ static exception_t invokeSchedControl_ConfigureFlags(sched_context_t *target, wo
 
 static exception_t decodeSchedControl_ConfigureFlags(word_t length, cap_t cap, word_t *buffer)
 {
-    if (current_extra_caps.excaprefs[0] == NULL) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL) {
         userError("SchedControl_ConfigureFlags: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -98,7 +98,7 @@ static exception_t decodeSchedControl_ConfigureFlags(word_t length, cap_t cap, w
     word_t badge = getSyscallArg(TIME_ARG_SIZE * 2 + 1, buffer);
     word_t flags = getSyscallArg(TIME_ARG_SIZE * 2 + 2, buffer);
 
-    cap_t targetCap = current_extra_caps.excaprefs[0]->cap;
+    cap_t targetCap = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
     if (unlikely(cap_get_capType(targetCap) != cap_sched_context_cap)) {
         userError("SchedControl_ConfigureFlags: target cap not a scheduling context cap");
         current_syscall_error.type = seL4_InvalidCapability;

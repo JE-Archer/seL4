@@ -49,5 +49,4 @@ static inline word_t PURE getSyscallArg(word_t i, word_t *ipc_buffer)
     return ipc_buffer[i + 1];
 }
 
-extern extra_caps_t current_extra_caps;
 

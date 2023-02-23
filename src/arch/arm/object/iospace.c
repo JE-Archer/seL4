@@ -163,7 +163,7 @@ exception_t decodeARMIOPTInvocation(
         return EXCEPTION_NONE;
     }
 
-    if (current_extra_caps.excaprefs[0] == NULL || length < 1) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL || length < 1) {
         userError("IOPTInvocation: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -175,7 +175,7 @@ exception_t decodeARMIOPTInvocation(
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    io_space     = current_extra_caps.excaprefs[0]->cap;
+    io_space     = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
     io_address   = getSyscallArg(0, buffer) & ~MASK(SMMU_IOPD_INDEX_SHIFT);
 
     if (cap_io_page_table_cap_get_capIOPTIsMapped(cap)) {
@@ -258,7 +258,7 @@ exception_t decodeARMIOMapInvocation(
     seL4_CapRights_t    dma_cap_rights_mask;
     lookupIOPTSlot_ret_t lu_ret;
 
-    if (current_extra_caps.excaprefs[0] == NULL || length < 2) {
+    if (NODE_STATE(ksCurrentExtraCaps).excaprefs[0] == NULL || length < 2) {
         userError("IOMap: Truncated message.");
         current_syscall_error.type = seL4_TruncatedMessage;
         return EXCEPTION_SYSCALL_ERROR;
@@ -278,7 +278,7 @@ exception_t decodeARMIOMapInvocation(
         return EXCEPTION_SYSCALL_ERROR;
     }
 
-    io_space    = current_extra_caps.excaprefs[0]->cap;
+    io_space    = NODE_STATE(ksCurrentExtraCaps).excaprefs[0]->cap;
     io_address  = getSyscallArg(1, buffer) & ~MASK(PAGE_BITS);
     paddr       = pptr_to_paddr((void *)cap_small_frame_cap_get_capFBasePtr(cap));
 
