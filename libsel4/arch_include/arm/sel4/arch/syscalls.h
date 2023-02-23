@@ -69,7 +69,7 @@ LIBSEL4_INLINE_FUNC void seL4_ReplyWithMRs(seL4_MessageInfo_t msgInfo,
 
 LIBSEL4_INLINE_FUNC void seL4_Signal(seL4_CPtr dest)
 {
-    arm_sys_send_null(seL4_SysNBSend, dest, seL4_MessageInfo_new(0, 0, 0, 0).words[0]);
+    arm_sys_send_null(seL4_SysSend, dest, seL4_MessageInfo_new(0, 0, 0, 0).words[0]);
 }
 
 
