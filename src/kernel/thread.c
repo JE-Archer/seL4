@@ -405,9 +405,10 @@ void schedule(void)
 
     if (NODE_STATE(ksSchedulerAction) != SchedulerAction_ResumeCurrentThread) {
         bool_t was_runnable;
-        if (isSchedulable(NODE_STATE(ksCurThread))) {
+        if (NODE_STATE(ksCurThread) && isSchedulable(NODE_STATE(ksCurThread))) {
             was_runnable = true;
-            SCHED_ENQUEUE_CURRENT_TCB;
+            SCHED_ENQUEUE(NODE_STATE(ksCurThread));
+//            SCHED_ENQUEUE_CURRENT_TCB;
         } else {
             was_runnable = false;
         }
@@ -653,10 +654,8 @@ void chargeBudget(ticks_t consumed, bool_t canTimeoutFault)
     NODE_STATE(ksConsumed) = 0;
     if (likely(isSchedulable(NODE_STATE(ksCurThread)))) {
         assert(NODE_STATE(ksCurThread)->tcbSchedContext == NODE_STATE(ksCurSC));
-        scheduler_lock_acquire(getCurrentCPUIndex());
         endTimeslice(canTimeoutFault);
         rescheduleRequired();
-        scheduler_lock_release(getCurrentCPUIndex());
         NODE_STATE(ksReprogram) = true;
     }
 }

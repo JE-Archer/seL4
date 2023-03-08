@@ -17,6 +17,107 @@
 #include <object/tcb.h>
 
 #ifdef CONFIG_KERNEL_MCS
+void sendIPCShared(bool_t blocking, bool_t do_call, word_t badge,
+             bool_t canGrant, bool_t canGrantReply, bool_t canDonate, tcb_t *thread, endpoint_t *epptr)
+{
+    switch (endpoint_ptr_get_state(epptr)) {
+    case EPState_Idle:
+    case EPState_Send:
+        if (blocking) {
+            tcb_queue_t queue;
+
+            /* Set thread state to BlockedOnSend */
+            thread_state_ptr_set_tsType(&thread->tcbState,
+                                        ThreadState_BlockedOnSend);
+            thread_state_ptr_set_blockingObject(
+                &thread->tcbState, EP_REF(epptr));
+            thread_state_ptr_set_blockingIPCBadge(
+                &thread->tcbState, badge);
+            thread_state_ptr_set_blockingIPCCanGrant(
+                &thread->tcbState, canGrant);
+            thread_state_ptr_set_blockingIPCCanGrantReply(
+                &thread->tcbState, canGrantReply);
+            thread_state_ptr_set_blockingIPCIsCall(
+                &thread->tcbState, do_call);
+
+            word_t affinity = thread->tcbAffinity;
+            scheduler_lock_acquire(affinity);
+            scheduleTCB(thread);
+            assert(affinity == thread->tcbAffinity);
+            scheduler_lock_release(affinity);
+
+            /* Place calling thread in endpoint queue */
+            queue = ep_ptr_get_queue(epptr);
+            queue = tcbEPAppend(thread, queue);
+            endpoint_ptr_set_state(epptr, EPState_Send);
+            ep_ptr_set_queue(epptr, queue);
+        }
+        break;
+
+    case EPState_Recv: {
+        tcb_queue_t queue;
+        tcb_t *dest;
+
+        /* Get the head of the endpoint queue. */
+        queue = ep_ptr_get_queue(epptr);
+        dest = queue.head;
+
+        /* Haskell error "Receive endpoint queue must not be empty" */
+        assert(dest);
+
+        /* Dequeue the first TCB */
+        queue = tcbEPDequeue(dest, queue);
+        ep_ptr_set_queue(epptr, queue);
+
+        if (!queue.head) {
+            endpoint_ptr_set_state(epptr, EPState_Idle);
+        }
+
+        /* Do the transfer */
+        assert(seL4_Fault_get_seL4_FaultType(thread->tcbFault) == seL4_Fault_NullFault);
+        doIPCTransfer(thread, epptr, badge, canGrant, dest);
+
+        reply_t *reply = REPLY_PTR(thread_state_get_replyObject(dest->tcbState));
+        if (reply) {
+            reply_unlink(reply, dest);
+        }
+
+        if (do_call ||
+            seL4_Fault_ptr_get_seL4_FaultType(&thread->tcbFault) != seL4_Fault_NullFault) {
+            if (reply != NULL && (canGrant || canGrantReply)) {
+                reply_push(thread, dest, reply, canDonate);
+            } else {
+                setThreadState(thread, ThreadState_Inactive);
+            }
+        } else if (canDonate && dest->tcbSchedContext == NULL) {
+            word_t affinity = thread->tcbAffinity;
+            scheduler_lock_acquire(affinity);
+            schedContext_donate(thread->tcbSchedContext, dest);
+            assert(affinity == thread->tcbAffinity);
+            scheduler_lock_release(affinity);
+        }
+
+        /* blocked threads should have enough budget to get out of the kernel */
+        assert(dest->tcbSchedContext == NULL || refill_sufficient(dest->tcbSchedContext, 0));
+        assert(dest->tcbSchedContext == NULL || refill_ready(dest->tcbSchedContext));
+        setThreadState(dest, ThreadState_Running);
+        if (sc_sporadic(dest->tcbSchedContext) && dest->tcbSchedContext != NODE_STATE(ksCurSC)) {
+            refill_unblock_check(dest->tcbSchedContext);
+        }
+        {
+            word_t affinity = dest->tcbAffinity;
+            scheduler_lock_acquire(affinity);
+            possibleSwitchTo(dest);
+            assert(affinity == dest->tcbAffinity);
+            scheduler_lock_release(affinity);
+        }
+        break;
+    }
+    }
+}
+#endif
+
+#ifdef CONFIG_KERNEL_MCS
 void sendIPC(bool_t blocking, bool_t do_call, word_t badge,
              bool_t canGrant, bool_t canGrantReply, bool_t canDonate, tcb_t *thread, endpoint_t *epptr)
 #else
@@ -152,9 +253,13 @@ void receiveIPCShared(tcb_t *thread, endpoint_t *epptr, bool_t isBlocking, reply
             if (replyPtr) {
                 replyPtr->replyTCB = thread;
             }
-            scheduler_lock_acquire(getCurrentCPUIndex());
-            scheduleTCB(thread);
-            scheduler_lock_release(getCurrentCPUIndex());
+            {
+                word_t affinity = thread->tcbAffinity;
+                scheduler_lock_acquire(affinity);
+                scheduleTCB(thread);
+                assert(affinity == thread->tcbAffinity);
+                scheduler_lock_release(affinity);
+            }
 
             /* Place calling thread in endpoint queue */
             queue = ep_ptr_get_queue(epptr);
@@ -208,15 +313,21 @@ void receiveIPCShared(tcb_t *thread, endpoint_t *epptr, bool_t isBlocking, reply
             if ((canGrant || canGrantReply) && replyPtr != NULL) {
                 bool_t canDonate = sender->tcbSchedContext != NULL
                                    && seL4_Fault_get_seL4_FaultType(sender->tcbFault) != seL4_Fault_Timeout;
+                word_t affinity = sender->tcbAffinity;
+                scheduler_lock_acquire(affinity);
                 reply_push(sender, thread, replyPtr, canDonate);
+                assert(affinity == sender->tcbAffinity);
+                scheduler_lock_release(affinity);
             } else {
                 setThreadState(sender, ThreadState_Inactive);
             }
         } else {
             setThreadState(sender, ThreadState_Running);
-            scheduler_lock_acquire(sender->tcbAffinity);
+            word_t affinity = sender->tcbAffinity;
+            scheduler_lock_acquire(affinity);
             possibleSwitchTo(sender);
-            scheduler_lock_release(sender->tcbAffinity);
+            assert(affinity == sender->tcbAffinity);
+            scheduler_lock_release(affinity);
             assert(sender->tcbSchedContext == NULL || refill_sufficient(sender->tcbSchedContext, 0));
         }
         break;

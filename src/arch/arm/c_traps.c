@@ -130,11 +130,17 @@ void NORETURN slowpath(syscall_t syscall)
 bool_t lock_shared_heuristic(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
     bool_t compatible_syscall = false;
-//    if (syscall == SysNBWait) compatible_syscall = true;
-//    if (syscall == SysWait) compatible_syscall = true;
-//    if (syscall == SysRecv) compatible_syscall = true;
-//    if (syscall == SysNBRecv) compatible_syscall = true;
-//    if (syscall == SysNBSend) compatible_syscall = true;
+    if (syscall == SysNBWait) compatible_syscall = true;
+    if (syscall == SysWait) compatible_syscall = true;
+    if (syscall == SysRecv) compatible_syscall = true;
+    if (syscall == SysReplyRecv) compatible_syscall = true;
+    if (syscall == SysNBRecv) compatible_syscall = true;
+    if (syscall == SysSend) compatible_syscall = true;
+    if (syscall == SysNBSend) compatible_syscall = true;
+    if (syscall == SysCall) compatible_syscall = true;
+    if (syscall == SysYield) compatible_syscall = true;
+    if (syscall == SysNBSendRecv) compatible_syscall = true;
+    if (syscall == SysNBSendWait) compatible_syscall = true;
     if (!compatible_syscall) {
         return false;
     }

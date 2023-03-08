@@ -105,11 +105,16 @@ void sendSignalShared(notification_t *ntfnPtr, word_t badge)
 
         setThreadState(dest, ThreadState_Running);
         setRegister(dest, badgeRegister, badge);
-        scheduler_lock_acquire(dest->tcbAffinity);
-        MCS_DO_IF_SC(dest, ntfnPtr, {
-            possibleSwitchTo(dest);
-        })
-        scheduler_lock_release(dest->tcbAffinity);
+        {
+            word_t affinity = dest->tcbAffinity;
+            scheduler_lock_acquire(affinity);
+            MCS_DO_IF_SC(dest, ntfnPtr, {
+                possibleSwitchTo(dest);
+            })
+            assert(affinity == dest->tcbAffinity);
+            scheduler_lock_release(affinity);
+        }
+
 
         if (sc_sporadic(dest->tcbSchedContext)) {
             /* We know that the receiver can't have the current SC
@@ -296,9 +301,7 @@ void receiveSignalShared(tcb_t *thread, notification_t *ntfn_ptr, bool_t isBlock
     case NtfnState_Active:
         setRegister(thread, badgeRegister, notification_ptr_get_ntfnMsgIdentifier(ntfn_ptr));
         notification_ptr_set_state(ntfn_ptr, NtfnState_Idle);
-        scheduler_lock_acquire(getCurrentCPUIndex());
         maybeDonateSchedContext(thread, ntfn_ptr);
-        scheduler_lock_release(getCurrentCPUIndex());
         // If the SC has been donated to the current thread (in a reply_recv, send_recv scenario) then
         // we may need to perform refill_unblock_check if the SC is becoming activated.
         if (thread->tcbSchedContext != NODE_STATE(ksCurSC) && sc_sporadic(thread->tcbSchedContext)) {
@@ -425,9 +428,7 @@ void completeSignal(notification_t *ntfnPtr, tcb_t *tcb)
         setRegister(tcb, badgeRegister, badge);
         notification_ptr_set_state(ntfnPtr, NtfnState_Idle);
 #ifdef CONFIG_KERNEL_MCS
-        scheduler_lock_acquire(getCurrentCPUIndex());
         maybeDonateSchedContext(tcb, ntfnPtr);
-        scheduler_lock_release(getCurrentCPUIndex());
         if (sc_sporadic(tcb->tcbSchedContext)) {
             sched_context_t *sc = SC_PTR(notification_ptr_get_ntfnSchedContext(ntfnPtr));
             if (tcb->tcbSchedContext == sc && tcb->tcbSchedContext != NODE_STATE(ksCurSC)) {

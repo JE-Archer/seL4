@@ -27,6 +27,9 @@ static inline void ep_ptr_set_queue(endpoint_t *epptr, tcb_queue_t queue)
 }
 
 #ifdef CONFIG_KERNEL_MCS
+void sendIPCShared(bool_t blocking, bool_t do_call, word_t badge,
+             bool_t canGrant, bool_t canGrantReply, bool_t canDonate, tcb_t *thread,
+             endpoint_t *epptr);
 void sendIPC(bool_t blocking, bool_t do_call, word_t badge,
              bool_t canGrant, bool_t canGrantReply, bool_t canDonate, tcb_t *thread,
              endpoint_t *epptr);
