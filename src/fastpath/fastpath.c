@@ -532,10 +532,6 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
      * At this stage, we have committed to performing the IPC.
      */
 
-    // slowpath(SysCall);
-
-    // assert(false);
-
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = true;
 #endif
@@ -671,7 +667,6 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     cte_t *callerSlot = TCB_PTR_CTE_PTR(NODE_STATE(ksCurThread), tcbCaller);
     cap_t callerCap = callerSlot->cap;
     if (unlikely(!fastpath_reply_cap_check(callerCap))) {
-        // ep_lock_release(ep_ptr);
         slowpath(SysReplyRecv);
     }
 
@@ -832,8 +827,6 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
      * At this stage, we have committed to performing the IPC.
      */
 
-    // slowpath(SysReplyRecv);
-
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
     ksKernelEntry.is_fastpath = true;
 #endif
@@ -922,7 +915,6 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     ep_lock_release(ep_ptr);
     reply_object_lock_release(reply_ptr);
 
-    // NODE_UNLOCK;
     NODE_READ_UNLOCK;
 
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
