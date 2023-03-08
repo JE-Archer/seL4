@@ -151,6 +151,9 @@ void handleIPI(irq_t irq, bool_t irqPath)
 
 void doRemoteMaskOp(IpiRemoteCall_t func, word_t data1, word_t data2, word_t data3, word_t mask)
 {
+    bool_t acquired = ipi_lock_try_acquire();
+    assert(acquired);
+
     /* make sure the current core is not set in the mask */
     mask &= ~BIT(getCurrentCPUIndex());
 
@@ -159,11 +162,15 @@ void doRemoteMaskOp(IpiRemoteCall_t func, word_t data1, word_t data2, word_t dat
     if (mask != 0) {
         init_ipi_args(func, data1, data2, data3, mask);
 
+        assert(clh_is_self_in_queue());
+
         /* make sure no resource access passes from this point */
         asm volatile("" ::: "memory");
         ipi_send_mask(CORE_IRQ_TO_IRQT(0, irq_remote_call_ipi), mask, true);
         ipi_wait(totalCoreBarrier);
     }
+
+    ipi_lock_release();
 }
 
 void doMaskReschedule(word_t mask)

@@ -368,3 +368,18 @@ void scheduler_lock_release(seL4_Word core) {}
 #define reply_object_lock_try_acquire(reply_ptr) (1)
 #define reply_object_lock_release(reply_ptr) {}
 #endif
+
+#ifndef DISABLE_IPI_LOCK
+extern word_t ipi_lock;
+#define ipi_lock_get() (&ipi_lock)
+#define ipi_lock_acquire() do { \
+    bool_t acquired = spinlock_acquire(ipi_lock_get()); \
+    assert(acquired); \
+} while (0);
+#define ipi_lock_try_acquire() (spinlock_try_acquire(ipi_lock_get()))
+#define ipi_lock_release() do { spinlock_release(ipi_lock_get()); } while (0);
+#else
+#define ipi_lock_acquire() {}
+#define ipi_lock_try_acquire() (1)
+#define ipi_lock_release() {}
+#endif
