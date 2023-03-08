@@ -136,6 +136,13 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 crossnode = true;
             }
 
+            reply_t *reply = REPLY_PTR(thread_state_get_replyObject(dest->tcbState));
+            if (reply && !reply_object_lock_try_acquire(reply)) {
+                ep_lock_release(ep_ptr);
+                ntfn_lock_release(ntfnPtr);
+                slowpath(SysSend);
+            }
+
             /*  Point of no return */
 #ifdef CONFIG_BENCHMARK_TRACK_KERNEL_ENTRIES
             ksKernelEntry.is_fastpath = true;
@@ -152,7 +159,6 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 endpoint_ptr_set_state(ep_ptr, EPState_Idle);
             }
 
-            reply_t *reply = REPLY_PTR(thread_state_get_replyObject(dest->tcbState));
             if (reply != NULL) {
                 reply_unlink(reply, dest);
             }
@@ -201,6 +207,9 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                 scheduler_lock_release(dest->tcbAffinity);
             }
 
+            if (reply) {
+                reply_object_lock_release(reply);
+            }
             ep_lock_release(ep_ptr);
             ntfn_lock_release(ntfnPtr);
 
