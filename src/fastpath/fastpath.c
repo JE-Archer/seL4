@@ -13,13 +13,6 @@
 #endif
 #include <benchmark/benchmark_utilisation.h>
 
-static inline void ntfn_set_active_atomic(notification_t *ntfnPtr, word_t badge)
-{
-    notification_ptr_set_state(ntfnPtr, NtfnState_Active);
-    __atomic_or_fetch(&ntfnPtr->words[2], badge, __ATOMIC_SEQ_CST);
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-}
-
 #ifdef CONFIG_ARCH_ARM
 static inline
 FORCE_INLINE
