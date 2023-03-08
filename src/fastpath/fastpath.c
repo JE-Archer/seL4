@@ -199,13 +199,13 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
              * the slowpath doesn't seem to do anything special besides just not
              * not scheduling the dest thread. */
             if (schedulable) {
-//                scheduler_lock_acquire(dest->tcbAffinity);
+                scheduler_lock_acquire(dest->tcbAffinity);
                 if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                     SCHED_ENQUEUE(dest);
                 } else {
                     SCHED_APPEND(dest);
                 }
-//                scheduler_lock_release(dest->tcbAffinity);
+                scheduler_lock_release(dest->tcbAffinity);
             }
 
             ep_lock_release(ep_ptr);
@@ -335,7 +335,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
          * the slowpath doesn't seem to do anything special besides just not
          * not scheduling the dest thread. */
         if (schedulable) {
-//            scheduler_lock_acquire(dest->tcbAffinity);
+            scheduler_lock_acquire(dest->tcbAffinity);
             if (NODE_STATE(ksCurThread)->tcbPriority < dest->tcbPriority || crossnode) {
                 SCHED_ENQUEUE(dest);
             } else {
@@ -344,7 +344,7 @@ void NORETURN fastpath_signal(word_t cptr, word_t msgInfo)
                  * of priority */
                 SCHED_APPEND(dest);
             }
-//            scheduler_lock_release(dest->tcbAffinity);
+            scheduler_lock_release(dest->tcbAffinity);
         }
 
         ntfn_lock_release(ntfnPtr);
