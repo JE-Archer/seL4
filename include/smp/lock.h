@@ -274,12 +274,22 @@ static bool_t clh_is_self_in_queue(void);
 
 static inline
 FORCE_INLINE
-void spinlock_acquire(uint8_t *lock)
+bool_t spinlock_acquire(uint8_t *lock)
 {
     if (clh_is_self_in_queue())
-        return;
-    while (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST));
+        return true;
+    word_t attempts = 0;
+    uint8_t expected = 0;
+    while (!__atomic_compare_exchange_n(lock, &expected, (uint8_t)(getCurrentCPUIndex()+1), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        attempts++;
+        if (attempts > 1000000000) {
+            printf("probable deadlock on %u: lock held by %u\n", getCurrentCPUIndex(), expected-1);
+            return false;
+        }
+        expected = 0;
+    }
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return true;
 }
 
 static inline
@@ -301,37 +311,17 @@ void spinlock_release(uint8_t *lock)
     if (clh_is_self_in_queue())
         return;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    __atomic_clear(lock, __ATOMIC_SEQ_CST);
+    __atomic_store_n(lock, (uint8_t)0, __ATOMIC_SEQ_CST);
 }
 
 #ifndef DISABLE_SCHEDULER_LOCKS
 #define scheduler_lock_get(node) ((uint8_t *)&scheduler_locks[node])
-
-static inline
-FORCE_INLINE
-void scheduler_lock_acquire(seL4_Word node)
-{
-    if (clh_is_self_in_queue())
-        return;
-    if (scheduler_locks_held_by_node[getCurrentCPUIndex()][node] != 0) {
-        scheduler_locks_held_by_node[getCurrentCPUIndex()][node]++;
-        return;
-    }
-    spinlock_acquire(scheduler_lock_get(node));
-    scheduler_locks_held_by_node[getCurrentCPUIndex()][node] = 1;
-}
-
-static inline
-FORCE_INLINE
-void scheduler_lock_release(seL4_Word node)
-{
-    if (clh_is_self_in_queue())
-        return;
-    scheduler_locks_held_by_node[getCurrentCPUIndex()][node]--;
-    if (scheduler_locks_held_by_node[getCurrentCPUIndex()][node] == 0) {
-        spinlock_release(scheduler_lock_get(node));
-    }
-}
+#define scheduler_lock_acquire(node) do { \
+    bool_t acquired = spinlock_acquire(scheduler_lock_get(node)); \
+    assert(acquired); \
+} while (0);
+#define scheduler_lock_try_acquire(node) (spinlock_try_acquire(scheduler_lock_get(node)))
+#define scheduler_lock_release(node) do { spinlock_release(scheduler_lock_get(node)); } while (0);
 #else
 void scheduler_lock_acquire(seL4_Word core) {}
 void scheduler_lock_release(seL4_Word core) {}
@@ -339,7 +329,10 @@ void scheduler_lock_release(seL4_Word core) {}
 
 #ifndef DISABLE_ENDPOINT_LOCKS
 #define ep_lock_get(ep_ptr) (&((uint8_t *)&(ep_ptr)->words[0])[0])
-#define ep_lock_acquire(ep_ptr) do { spinlock_acquire(ep_lock_get(ep_ptr)); } while (0);
+#define ep_lock_acquire(ep_ptr) do { \
+    bool_t acquired = spinlock_acquire(ep_lock_get(ep_ptr)); \
+    assert(acquired); \
+} while (0);
 #define ep_lock_try_acquire(ep_ptr) (spinlock_try_acquire(ep_lock_get(ep_ptr)))
 #define ep_lock_release(ep_ptr) do { spinlock_release(ep_lock_get(ep_ptr)); } while (0);
 #else
@@ -350,7 +343,10 @@ void scheduler_lock_release(seL4_Word core) {}
 
 #ifndef DISABLE_NOTIFICATION_LOCKS
 #define ntfn_lock_get(ntfn_ptr) (&((uint8_t *)&ntfn_ptr->words[0])[0])
-#define ntfn_lock_acquire(ntfn_ptr) do { spinlock_acquire(ntfn_lock_get(ntfn_ptr)); } while (0);
+#define ntfn_lock_acquire(ntfn_ptr) do { \
+    bool_t acquired = spinlock_acquire(ntfn_lock_get(ntfn_ptr)); \
+    assert(acquired); \
+} while (0);
 #define ntfn_lock_try_acquire(ntfn_ptr) (spinlock_try_acquire(ntfn_lock_get(ntfn_ptr)))
 #define ntfn_lock_release(ntfn_ptr) do { spinlock_release(ntfn_lock_get(ntfn_ptr)); } while (0);
 #else
@@ -361,7 +357,10 @@ void scheduler_lock_release(seL4_Word core) {}
 
 #ifndef DISABLE_REPLY_OBJECT_LOCKS
 #define reply_object_lock_get(reply_ptr) ((uint8_t *)&reply_ptr->lock)
-#define reply_object_lock_acquire(reply_ptr) do { spinlock_acquire(reply_object_lock_get(reply_ptr)); } while (0);
+#define reply_object_lock_acquire(reply_ptr) do { \
+    bool_t acquired = spinlock_acquire(reply_object_lock_get(reply_ptr)); \
+    assert(acquired); \
+} while (0);
 #define reply_object_lock_try_acquire(reply_ptr) (spinlock_try_acquire(reply_object_lock_get(reply_ptr)))
 #define reply_object_lock_release(reply_ptr) do { spinlock_release(reply_object_lock_get(reply_ptr)); } while (0);
 #else
