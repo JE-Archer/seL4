@@ -186,38 +186,38 @@ void tcbSchedDequeue(tcb_t *tcb)
 #ifdef CONFIG_DEBUG_BUILD
 void tcbDebugAppend(tcb_t *tcb)
 {
-    debug_tcb_t *debug_tcb = TCB_PTR_DEBUG_PTR(tcb);
-    /* prepend to the list */
-    debug_tcb->tcbDebugPrev = NULL;
-
-    debug_tcb->tcbDebugNext = NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity);
-
-    if (NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity)) {
-        TCB_PTR_DEBUG_PTR(NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity))->tcbDebugPrev = tcb;
-    }
-
-    NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) = tcb;
+//    debug_tcb_t *debug_tcb = TCB_PTR_DEBUG_PTR(tcb);
+//    /* prepend to the list */
+//    debug_tcb->tcbDebugPrev = NULL;
+//
+//    debug_tcb->tcbDebugNext = NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity);
+//
+//    if (NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity)) {
+//        TCB_PTR_DEBUG_PTR(NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity))->tcbDebugPrev = tcb;
+//    }
+//
+//    NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) = tcb;
 }
 
 void tcbDebugRemove(tcb_t *tcb)
 {
-    debug_tcb_t *debug_tcb = TCB_PTR_DEBUG_PTR(tcb);
-
-    assert(NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) != NULL);
-    if (tcb == NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity)) {
-        NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) = TCB_PTR_DEBUG_PTR(NODE_STATE_ON_CORE(ksDebugTCBs,
-                                                                                                 tcb->tcbAffinity))->tcbDebugNext;
-    } else {
-        assert(TCB_PTR_DEBUG_PTR(tcb)->tcbDebugPrev);
-        TCB_PTR_DEBUG_PTR(debug_tcb->tcbDebugPrev)->tcbDebugNext = debug_tcb->tcbDebugNext;
-    }
-
-    if (debug_tcb->tcbDebugNext) {
-        TCB_PTR_DEBUG_PTR(debug_tcb->tcbDebugNext)->tcbDebugPrev = debug_tcb->tcbDebugPrev;
-    }
-
-    debug_tcb->tcbDebugPrev = NULL;
-    debug_tcb->tcbDebugNext = NULL;
+//    debug_tcb_t *debug_tcb = TCB_PTR_DEBUG_PTR(tcb);
+//
+//    assert(NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) != NULL);
+//    if (tcb == NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity)) {
+//        NODE_STATE_ON_CORE(ksDebugTCBs, tcb->tcbAffinity) = TCB_PTR_DEBUG_PTR(NODE_STATE_ON_CORE(ksDebugTCBs,
+//                                                                                                 tcb->tcbAffinity))->tcbDebugNext;
+//    } else {
+//        assert(TCB_PTR_DEBUG_PTR(tcb)->tcbDebugPrev);
+//        TCB_PTR_DEBUG_PTR(debug_tcb->tcbDebugPrev)->tcbDebugNext = debug_tcb->tcbDebugNext;
+//    }
+//
+//    if (debug_tcb->tcbDebugNext) {
+//        TCB_PTR_DEBUG_PTR(debug_tcb->tcbDebugNext)->tcbDebugPrev = debug_tcb->tcbDebugPrev;
+//    }
+//
+//    debug_tcb->tcbDebugPrev = NULL;
+//    debug_tcb->tcbDebugNext = NULL;
 }
 #endif /* CONFIG_DEBUG_BUILD */
 
