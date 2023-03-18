@@ -83,8 +83,8 @@ static inline void *sel4_atomic_exchange(void *ptr, bool_t
 {
     clh_qnode_t *prev;
 
-    if (memorder == __ATOMIC_SEQ_CST || memorder == __ATOMIC_ACQ_REL) {
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (memorder == __ATOMIC_RELEASE || memorder == __ATOMIC_ACQ_REL) {
+        __atomic_thread_fence(__ATOMIC_RELEASE);
     } else if (memorder == __ATOMIC_SEQ_CST) {
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
@@ -102,8 +102,8 @@ static inline void *sel4_atomic_exchange(void *ptr, bool_t
         arch_pause();
     }
 
-    if (memorder == __ATOMIC_SEQ_CST || memorder == __ATOMIC_ACQ_REL) {
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (memorder == __ATOMIC_ACQUIRE || memorder == __ATOMIC_ACQ_REL) {
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
     } else if (memorder == __ATOMIC_SEQ_CST) {
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
@@ -125,7 +125,7 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
     while (big_kernel_lock.node_owners[cpu].next->value != CLHState_Granted) {
         /* As we are in a loop we need to ensure that any loads of future iterations of the
          * loop are performed after this one */
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
         if (clh_is_ipi_pending(cpu)) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
@@ -138,9 +138,9 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
     }
 
     big_kernel_lock.current_writer_turn.turn = !big_kernel_lock.current_writer_turn.turn;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQ_REL);
     while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
         if (clh_is_ipi_pending(cpu)) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
@@ -153,16 +153,16 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
     }
 
     /* make sure no resource access passes from this point */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
 
 static inline void FORCE_INLINE clh_lock_release(word_t cpu)
 {
     /* make sure no resource access passes from this point */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
 
     big_kernel_lock.completed_writer_turn.turn = !big_kernel_lock.completed_writer_turn.turn;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQ_REL);
 
     big_kernel_lock.node_owners[cpu].node->value = CLHState_Granted;
     big_kernel_lock.node_owners[cpu].node =
@@ -172,14 +172,13 @@ static inline void FORCE_INLINE clh_lock_release(word_t cpu)
 static inline void FORCE_INLINE clh_lock_read_acquire(word_t cpu)
 {
     big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = true;
-    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[0].count, 1, __ATOMIC_SEQ_CST);
-    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[1].count, 1, __ATOMIC_SEQ_CST);
+    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[0].count, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[1].count, 1, __ATOMIC_ACQUIRE);
     big_kernel_lock.node_read_state[cpu].observed_writer_turn = big_kernel_lock.current_writer_turn.turn;
-    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[!big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_SEQ_CST);
+    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[!big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_ACQ_REL);
 
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     while (big_kernel_lock.completed_writer_turn.turn != big_kernel_lock.node_read_state[cpu].observed_writer_turn) {
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
         if (clh_is_ipi_pending(cpu)) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
@@ -195,18 +194,13 @@ static inline void FORCE_INLINE clh_lock_read_acquire(word_t cpu)
     big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = false;
 
     /* make sure no resource access passes from this point */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
 
 static inline void FORCE_INLINE clh_lock_read_release(word_t cpu)
 {
-    /* make sure no resource access passes from this point */
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-
-    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_SEQ_CST);
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     big_kernel_lock.node_read_state[cpu].own_read_lock = false;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_RELEASE);
 }
 
 static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
@@ -274,21 +268,15 @@ static bool_t clh_is_self_in_queue(void);
 
 static inline
 FORCE_INLINE
-bool_t spinlock_acquire(uint8_t *lock)
+void spinlock_acquire(uint8_t *lock)
 {
     if (clh_is_self_in_queue())
         return true;
-    word_t attempts = 0;
     uint8_t expected = 0;
-    while (!__atomic_compare_exchange_n(lock, &expected, (uint8_t)(getCurrentCPUIndex()+1), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-        attempts++;
-        if (attempts > 1000000000) {
-            printf("probable deadlock on %u: lock held by %u\n", getCurrentCPUIndex(), expected-1);
-            return false;
-        }
+    while (!__atomic_compare_exchange_n(lock, &expected, (uint8_t)(getCurrentCPUIndex()+1), true, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         expected = 0;
     }
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+//    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     return true;
 }
 
@@ -298,9 +286,11 @@ int spinlock_try_acquire(uint8_t *lock)
 {
     if (clh_is_self_in_queue())
         return 1;
-    if (__atomic_test_and_set(lock, __ATOMIC_SEQ_CST))
+    uint8_t expected = 0;
+    if (!__atomic_compare_exchange_n(lock, &expected, (uint8_t)(getCurrentCPUIndex()+1), false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         return 0;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    }
+//    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     return 1;
 }
 
@@ -310,15 +300,14 @@ void spinlock_release(uint8_t *lock)
 {
     if (clh_is_self_in_queue())
         return;
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    __atomic_store_n(lock, (uint8_t)0, __ATOMIC_SEQ_CST);
+//    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_store_n(lock, (uint8_t)0, __ATOMIC_RELEASE);
 }
 
 #ifndef DISABLE_SCHEDULER_LOCKS
 #define scheduler_lock_get(node) ((uint8_t *)&scheduler_locks[node])
 #define scheduler_lock_acquire(node) do { \
-    bool_t acquired = spinlock_acquire(scheduler_lock_get(node)); \
-    assert(acquired); \
+    spinlock_acquire(scheduler_lock_get(node)); \
 } while (0);
 #define scheduler_lock_try_acquire(node) (spinlock_try_acquire(scheduler_lock_get(node)))
 #define scheduler_lock_release(node) do { spinlock_release(scheduler_lock_get(node)); } while (0);
@@ -330,8 +319,7 @@ void scheduler_lock_release(seL4_Word core) {}
 #ifndef DISABLE_ENDPOINT_LOCKS
 #define ep_lock_get(ep_ptr) (&((uint8_t *)&(ep_ptr)->words[0])[0])
 #define ep_lock_acquire(ep_ptr) do { \
-    bool_t acquired = spinlock_acquire(ep_lock_get(ep_ptr)); \
-    assert(acquired); \
+    spinlock_acquire(ep_lock_get(ep_ptr)); \
 } while (0);
 #define ep_lock_try_acquire(ep_ptr) (spinlock_try_acquire(ep_lock_get(ep_ptr)))
 #define ep_lock_release(ep_ptr) do { spinlock_release(ep_lock_get(ep_ptr)); } while (0);
@@ -344,8 +332,7 @@ void scheduler_lock_release(seL4_Word core) {}
 #ifndef DISABLE_NOTIFICATION_LOCKS
 #define ntfn_lock_get(ntfn_ptr) (&((uint8_t *)&ntfn_ptr->words[0])[0])
 #define ntfn_lock_acquire(ntfn_ptr) do { \
-    bool_t acquired = spinlock_acquire(ntfn_lock_get(ntfn_ptr)); \
-    assert(acquired); \
+    spinlock_acquire(ntfn_lock_get(ntfn_ptr)); \
 } while (0);
 #define ntfn_lock_try_acquire(ntfn_ptr) (spinlock_try_acquire(ntfn_lock_get(ntfn_ptr)))
 #define ntfn_lock_release(ntfn_ptr) do { spinlock_release(ntfn_lock_get(ntfn_ptr)); } while (0);
@@ -358,8 +345,7 @@ void scheduler_lock_release(seL4_Word core) {}
 #ifndef DISABLE_REPLY_OBJECT_LOCKS
 #define reply_object_lock_get(reply_ptr) ((uint8_t *)&reply_ptr->lock)
 #define reply_object_lock_acquire(reply_ptr) do { \
-    bool_t acquired = spinlock_acquire(reply_object_lock_get(reply_ptr)); \
-    assert(acquired); \
+    spinlock_acquire(reply_object_lock_get(reply_ptr)); \
 } while (0);
 #define reply_object_lock_try_acquire(reply_ptr) (spinlock_try_acquire(reply_object_lock_get(reply_ptr)))
 #define reply_object_lock_release(reply_ptr) do { spinlock_release(reply_object_lock_get(reply_ptr)); } while (0);
