@@ -145,7 +145,7 @@ bool_t lock_shared_heuristic(word_t cptr, word_t msgInfo, syscall_t syscall)
         return false;
     }
 
-    if (msgInfo & seL4_MsgExtraCapBits) {
+    if (seL4_MessageInfo_get_extraCaps(messageInfoFromWord(msgInfo)) != 0) {
         return false;
     }
 
