@@ -104,6 +104,7 @@ void VISIBLE NORETURN c_handle_interrupt(void)
 
 void NORETURN slowpathExclusive(syscall_t syscall)
 {
+    NODE_TAKE_WRITE_IF_READ_HELD;
     if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
 #ifdef TRACK_KERNEL_ENTRIES
         ksKernelEntry.path = Entry_UnknownSyscall;
