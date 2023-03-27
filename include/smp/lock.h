@@ -271,13 +271,12 @@ FORCE_INLINE
 void spinlock_acquire(uint8_t *lock)
 {
     if (clh_is_self_in_queue())
-        return true;
+        return;
     uint8_t expected = 0;
     while (!__atomic_compare_exchange_n(lock, &expected, (uint8_t)(getCurrentCPUIndex()+1), true, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         expected = 0;
     }
 //    __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    return true;
 }
 
 static inline
