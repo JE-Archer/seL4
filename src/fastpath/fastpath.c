@@ -388,7 +388,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
      * saved fault. */
     if (unlikely(fastpath_mi_check(msgInfo) ||
                  fault_type != seL4_Fault_NullFault)) {
-        slowpathShared(SysCall);
+        slowpathExclusive(SysCall);
     }
 
     /* Lookup the cap */
@@ -397,7 +397,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     /* Check it's an endpoint */
     if (unlikely(!cap_capType_equals(ep_cap, cap_endpoint_cap) ||
                  !cap_endpoint_cap_get_capCanSend(ep_cap))) {
-        slowpathShared(SysCall);
+        slowpathExclusive(SysCall);
     }
 
     /* Get the endpoint address */
@@ -431,7 +431,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     /* Ensure that the destination has a valid VTable. */
     if (unlikely(! isValidVTableRoot_fp(newVTable))) {
         ep_lock_release(ep_ptr);
-        slowpathShared(SysCall);
+        slowpathExclusive(SysCall);
     }
 
 #ifdef CONFIG_ARCH_AARCH32
@@ -455,7 +455,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     if (unlikely(asid_map_get_type(asid_map) != asid_map_asid_map_vspace ||
                  VSPACE_PTR(asid_map_asid_map_vspace_get_vspace_root(asid_map)) != cap_pd)) {
         ep_lock_release(ep_ptr);
-        slowpathShared(SysCall);
+        slowpathExclusive(SysCall);
     }
 #ifdef CONFIG_ARM_HYPERVISOR_SUPPORT
     /* Ensure the vmid is valid. */
@@ -489,7 +489,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
     if (unlikely(!cap_endpoint_cap_get_capCanGrant(ep_cap) &&
                  !cap_endpoint_cap_get_capCanGrantReply(ep_cap))) {
         ep_lock_release(ep_ptr);
-        slowpathShared(SysCall);
+        slowpathExclusive(SysCall);
     }
 
 #ifdef CONFIG_ARCH_AARCH32

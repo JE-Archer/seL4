@@ -13,6 +13,8 @@
 
 void slowpathShared(syscall_t syscall)
 NORETURN;
+void slowpathExclusive(syscall_t syscall)
+NORETURN;
 
 #ifdef CONFIG_SIGNAL_FASTPATH
 static inline
