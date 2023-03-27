@@ -11,7 +11,7 @@
 #include <benchmark/benchmark_track.h>
 #include <arch/machine/debug.h>
 
-void slowpath(syscall_t syscall)
+void slowpathShared(syscall_t syscall)
 NORETURN;
 
 #ifdef CONFIG_SIGNAL_FASTPATH

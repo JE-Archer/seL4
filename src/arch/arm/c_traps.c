@@ -102,10 +102,8 @@ void VISIBLE NORETURN c_handle_interrupt(void)
     restore_user_context();
 }
 
-void NORETURN slowpath(syscall_t syscall)
+void NORETURN slowpathExclusive(syscall_t syscall)
 {
-    NODE_TAKE_WRITE_IF_READ_HELD;
-
     if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
 #ifdef TRACK_KERNEL_ENTRIES
         ksKernelEntry.path = Entry_UnknownSyscall;
@@ -126,16 +124,28 @@ void NORETURN slowpath(syscall_t syscall)
     UNREACHABLE();
 }
 
+void NORETURN slowpathShared(syscall_t syscall)
+{
+    if (unlikely(syscall < SYSCALL_MIN || syscall > SYSCALL_MAX)) {
+        slowpathExclusive(syscall);
+    } else {
+        handleSyscallShared(syscall);
+    }
+
+    restore_user_context();
+    UNREACHABLE();
+}
+
 #ifdef CONFIG_KERNEL_MCS
 bool_t lock_shared_heuristic(word_t cptr, word_t msgInfo, syscall_t syscall)
 {
     bool_t compatible_syscall = false;
+    if (syscall == SysSend) compatible_syscall = true;
     if (syscall == SysNBWait) compatible_syscall = true;
     if (syscall == SysWait) compatible_syscall = true;
     if (syscall == SysRecv) compatible_syscall = true;
     if (syscall == SysReplyRecv) compatible_syscall = true;
     if (syscall == SysNBRecv) compatible_syscall = true;
-    if (syscall == SysSend) compatible_syscall = true;
     if (syscall == SysNBSend) compatible_syscall = true;
     if (syscall == SysCall) compatible_syscall = true;
     if (syscall == SysYield) compatible_syscall = true;
@@ -177,11 +187,10 @@ void VISIBLE c_handle_syscall(word_t cptr, word_t msgInfo, syscall_t syscall)
 #ifdef CONFIG_KERNEL_MCS
     if (!shared) {
 #endif
-        slowpath(syscall);
+        slowpathExclusive(syscall);
 #ifdef CONFIG_KERNEL_MCS
     } else {
-        handleSyscallShared(syscall);
-        restore_user_context();
+        slowpathShared(syscall);
     }
 #endif
     UNREACHABLE();
