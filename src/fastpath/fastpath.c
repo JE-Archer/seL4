@@ -594,7 +594,7 @@ void NORETURN fastpath_call(word_t cptr, word_t msgInfo)
 
     ep_lock_release(ep_ptr);
 
-    NODE_READ_UNLOCK;
+    NODE_UNLOCK_IF_HELD;
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }
 
@@ -915,7 +915,7 @@ void NORETURN fastpath_reply_recv(word_t cptr, word_t msgInfo)
     ep_lock_release(ep_ptr);
     reply_object_lock_release(reply_ptr);
 
-    NODE_READ_UNLOCK;
+    NODE_UNLOCK_IF_HELD;
 
     fastpath_restore(badge, msgInfo, NODE_STATE(ksCurThread));
 }

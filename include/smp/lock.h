@@ -41,6 +41,9 @@ typedef struct clh_qnode_p {
                          sizeof(word_t));
 } clh_qnode_p_t;
 
+#define W ((word_t)0)
+#define R ((word_t)1)
+
 typedef struct clh_lock {
     clh_qnode_t nodes[CONFIG_MAX_NUM_NODES + 1];
     clh_qnode_p_t node_owners[CONFIG_MAX_NUM_NODES];
@@ -48,22 +51,11 @@ typedef struct clh_lock {
     clh_qnode_t *head;
     PAD_TO_NEXT_CACHE_LN(sizeof(clh_qnode_t *));
 
-    struct {
-        word_t turn;
-        PAD_TO_NEXT_CACHE_LN(sizeof(word_t));
-    } current_writer_turn, completed_writer_turn;
-
-    struct {
-        word_t count;
-        PAD_TO_NEXT_CACHE_LN(sizeof(word_t));
-    } reader_cohorts[2];
-
-    struct {
-        word_t observed_writer_turn;
-        word_t own_read_lock;
-        word_t waiting_on_read_lock;
-        PAD_TO_NEXT_CACHE_LN(sizeof(word_t) +
-                             sizeof(word_t));
+    struct node_read_state {
+        word_t w_flag, r_flag, turn;
+        bool_t own_read_lock;
+        bool_t waiting_on_read_lock;
+        PAD_TO_NEXT_CACHE_LN(3 * sizeof(word_t) + 2 * sizeof (bool_t));
     } node_read_state[CONFIG_MAX_NUM_NODES];
 } clh_lock_t;
 
@@ -137,19 +129,21 @@ static inline void FORCE_INLINE clh_lock_acquire(word_t cpu, bool_t irqPath)
         arch_pause();
     }
 
-    big_kernel_lock.current_writer_turn.turn = !big_kernel_lock.current_writer_turn.turn;
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+
+    for (word_t node = 0; node < CONFIG_MAX_NUM_NODES; node++) {
+        struct node_read_state *s = &big_kernel_lock.node_read_state[node];
+        s->w_flag = true;
+        s->turn = R;
+    }
+
     __atomic_thread_fence(__ATOMIC_ACQ_REL);
-    while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        if (clh_is_ipi_pending(cpu)) {
-            /* we only handle irq_remote_call_ipi here as other type of IPIs
-             * are async and could be delayed. 'handleIPI' may not return
-             * based on value of the 'irqPath'. */
-            handleIPI(CORE_IRQ_TO_IRQT(cpu, irq_remote_call_ipi), irqPath);
-            /* We do not need to perform a memory release here as we would have only modified
-             * local state that we do not need to make visible */
+
+    for (word_t node = 0; node < CONFIG_MAX_NUM_NODES; node++) {
+        struct node_read_state *s = &big_kernel_lock.node_read_state[node];
+        while (s->r_flag && s->turn == R) {
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
         }
-        arch_pause();
     }
 
     /* make sure no resource access passes from this point */
@@ -161,46 +155,62 @@ static inline void FORCE_INLINE clh_lock_release(word_t cpu)
     /* make sure no resource access passes from this point */
     __atomic_thread_fence(__ATOMIC_RELEASE);
 
-    big_kernel_lock.completed_writer_turn.turn = !big_kernel_lock.completed_writer_turn.turn;
-    __atomic_thread_fence(__ATOMIC_ACQ_REL);
+    for (word_t node = 0; node < CONFIG_MAX_NUM_NODES; node++) {
+        struct node_read_state *s = &big_kernel_lock.node_read_state[node];
+        s->w_flag = false;
+    }
 
     big_kernel_lock.node_owners[cpu].node->value = CLHState_Granted;
     big_kernel_lock.node_owners[cpu].node =
         big_kernel_lock.node_owners[cpu].next;
 }
 
-static inline void FORCE_INLINE clh_lock_read_acquire(word_t cpu)
+static inline bool_t FORCE_INLINE is_self_waiting_on_read_lock(void)
 {
-    big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = true;
-    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[0].count, 1, __ATOMIC_RELAXED);
-    __atomic_fetch_add(&big_kernel_lock.reader_cohorts[1].count, 1, __ATOMIC_ACQUIRE);
-    big_kernel_lock.node_read_state[cpu].observed_writer_turn = big_kernel_lock.current_writer_turn.turn;
-    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[!big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_ACQ_REL);
+    return big_kernel_lock.node_read_state[getCurrentCPUIndex()].waiting_on_read_lock;
+}
 
-    while (big_kernel_lock.completed_writer_turn.turn != big_kernel_lock.node_read_state[cpu].observed_writer_turn) {
+static inline bool_t FORCE_INLINE does_self_own_read_lock(void)
+{
+    return big_kernel_lock.node_read_state[getCurrentCPUIndex()].own_read_lock;
+}
+
+static inline void FORCE_INLINE clh_lock_read_acquire(void)
+{
+    struct node_read_state *s = &big_kernel_lock.node_read_state[getCurrentCPUIndex()];
+
+    s->r_flag = true;
+    s->turn = W;
+
+    __atomic_thread_fence(__ATOMIC_ACQ_REL);
+
+    big_kernel_lock.node_read_state[getCurrentCPUIndex()].waiting_on_read_lock = true;
+    while (s->w_flag && s->turn == W) {
         __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        if (clh_is_ipi_pending(cpu)) {
+        if (clh_is_ipi_pending(getCurrentCPUIndex())) {
             /* we only handle irq_remote_call_ipi here as other type of IPIs
              * are async and could be delayed. 'handleIPI' may not return
              * based on value of the 'irqPath'. */
-            handleIPI(CORE_IRQ_TO_IRQT(cpu, irq_remote_call_ipi), false);
+            handleIPI(CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_remote_call_ipi), false);
             /* We do not need to perform a memory release here as we would have only modified
              * local state that we do not need to make visible */
         }
         arch_pause();
     }
 
-    big_kernel_lock.node_read_state[cpu].own_read_lock = true;
-    big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = false;
+    s->waiting_on_read_lock = false;
+    s->own_read_lock = true;
 
     /* make sure no resource access passes from this point */
     __atomic_thread_fence(__ATOMIC_ACQUIRE);
 }
 
-static inline void FORCE_INLINE clh_lock_read_release(word_t cpu)
+static inline void FORCE_INLINE clh_lock_read_release(void)
 {
-    big_kernel_lock.node_read_state[cpu].own_read_lock = false;
-    __atomic_fetch_sub(&big_kernel_lock.reader_cohorts[big_kernel_lock.node_read_state[cpu].observed_writer_turn].count, 1, __ATOMIC_RELEASE);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    struct node_read_state *s = &big_kernel_lock.node_read_state[getCurrentCPUIndex()];
+    s->r_flag = false;
+    s->own_read_lock = false;
 }
 
 static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
@@ -217,11 +227,11 @@ static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
 } while(0)
 
 #define NODE_READ_LOCK_ do {                             \
-    clh_lock_read_acquire(getCurrentCPUIndex());         \
+    clh_lock_read_acquire();         \
 } while (0)
 
 #define NODE_READ_UNLOCK_ do {                           \
-    clh_lock_read_release(getCurrentCPUIndex());         \
+    clh_lock_read_release();         \
 } while (0)
 
 #define NODE_LOCK_IF(_cond, _irqPath) do {               \
@@ -234,13 +244,13 @@ static inline bool_t FORCE_INLINE clh_is_self_in_queue(void)
     if(clh_is_self_in_queue()) {                         \
         NODE_UNLOCK;                                     \
     }                                                    \
-    else if (big_kernel_lock.node_read_state[getCurrentCPUIndex()].own_read_lock) { \
+    else if (does_self_own_read_lock()) { \
         NODE_READ_UNLOCK_;                               \
     }                                                    \
 } while(0)
 
 #define NODE_TAKE_WRITE_IF_READ_HELD_ do {               \
-    if (big_kernel_lock.node_read_state[getCurrentCPUIndex()].own_read_lock) { \
+    if (does_self_own_read_lock()) { \
         NODE_READ_UNLOCK_;                               \
         NODE_LOCK_SYS;                                   \
     }                                                    \
@@ -302,6 +312,11 @@ void spinlock_release(uint8_t *lock)
 //    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     __atomic_store_n(lock, (uint8_t)0, __ATOMIC_RELEASE);
 }
+
+//#define DISABLE_SCHEDULER_LOCKS
+//#define DISABLE_ENDPOINT_LOCKS
+//#define DISABLE_NOTIFICATION_LOCKS
+//#define DISABLE_REPLY_OBJECT_LOCKS
 
 #ifndef DISABLE_SCHEDULER_LOCKS
 #define scheduler_lock_get(node) ((uint8_t *)&scheduler_locks[node])

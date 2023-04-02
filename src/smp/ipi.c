@@ -57,17 +57,22 @@ void ipiStallCoreCallback(bool_t irqPath)
             }
             arch_pause();
         }
-        big_kernel_lock.current_writer_turn.turn = !big_kernel_lock.current_writer_turn.turn;
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        while (big_kernel_lock.reader_cohorts[!big_kernel_lock.current_writer_turn.turn].count != 0) {
-            __atomic_thread_fence(__ATOMIC_ACQUIRE);
-            if (clh_is_ipi_pending(getCurrentCPUIndex())) {
 
-                /* Multiple calls for similar reason could result in stack overflow */
-                assert((IpiRemoteCall_t)remoteCall != IpiRemoteCall_Stall);
-                handleIPI(CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_remote_call_ipi), irqPath);
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+
+        for (word_t node = 0; node < CONFIG_MAX_NUM_NODES; node++) {
+            struct node_read_state *s = &big_kernel_lock.node_read_state[node];
+            s->w_flag = true;
+            s->turn = R;
+        }
+
+        __atomic_thread_fence(__ATOMIC_ACQ_REL);
+
+        for (word_t node = 0; node < CONFIG_MAX_NUM_NODES; node++) {
+            struct node_read_state *s = &big_kernel_lock.node_read_state[node];
+            while (s->r_flag && s->turn == R) {
+                __atomic_thread_fence(__ATOMIC_ACQUIRE);
             }
-            arch_pause();
         }
 
         /* make sure no resource access passes from this point */
@@ -76,8 +81,7 @@ void ipiStallCoreCallback(bool_t irqPath)
         /* Start idle thread to capture the pending IPI */
         activateThread();
         restore_user_context();
-    } else if (big_kernel_lock.node_read_state[getCurrentCPUIndex()].waiting_on_read_lock) {
-        int cpu = getCurrentCPUIndex();
+    } else if (is_self_waiting_on_read_lock()) {
         if (thread_state_ptr_get_tsType(&NODE_STATE(ksCurThread)->tcbState) == ThreadState_Running) {
             setThreadState(NODE_STATE(ksCurThread), ThreadState_Restart);
         }
@@ -97,22 +101,19 @@ void ipiStallCoreCallback(bool_t irqPath)
 #endif
         ipi_wait(totalCoreBarrier);
 
-        __atomic_thread_fence(__ATOMIC_ACQUIRE);
-        while (big_kernel_lock.completed_writer_turn.turn != big_kernel_lock.node_read_state[cpu].observed_writer_turn) {
+        struct node_read_state *s = &big_kernel_lock.node_read_state[getCurrentCPUIndex()];
+
+        while (s->w_flag && s->turn == W) {
             __atomic_thread_fence(__ATOMIC_ACQUIRE);
-            if (clh_is_ipi_pending(cpu)) {
-                /* we only handle irq_remote_call_ipi here as other type of IPIs
-                 * are async and could be delayed. 'handleIPI' may not return
-                 * based on value of the 'irqPath'. */
-                handleIPI(CORE_IRQ_TO_IRQT(cpu, irq_remote_call_ipi), false);
-                /* We do not need to perform a memory release here as we would have only modified
-                 * local state that we do not need to make visible */
+            if (clh_is_ipi_pending(getCurrentCPUIndex())) {
+                /* Multiple calls for similar reason could result in stack overflow */
+                assert((IpiRemoteCall_t)remoteCall != IpiRemoteCall_Stall);
+                handleIPI(CORE_IRQ_TO_IRQT(getCurrentCPUIndex(), irq_remote_call_ipi), irqPath);
             }
             arch_pause();
         }
-
-        big_kernel_lock.node_read_state[cpu].own_read_lock = true;
-        big_kernel_lock.node_read_state[cpu].waiting_on_read_lock = false;
+        s->waiting_on_read_lock = false;
+        s->own_read_lock = true;
 
         /* make sure no resource access passes from this point */
         asm volatile("" ::: "memory");
@@ -125,6 +126,7 @@ void ipiStallCoreCallback(bool_t irqPath)
          * inside the lock while waiting to grab the lock for handling pending interrupt.
          * In latter case, we return to the 'clh_lock_acquire' to grab the lock and
          * handle the pending interrupt. Its valid as interrups are async events! */
+
         SCHED_ENQUEUE_CURRENT_TCB;
         switchToIdleThread();
 #ifdef CONFIG_KERNEL_MCS
